@@ -1,6 +1,6 @@
 # pvc Core Limitations Tracker
 
-Last updated: 2026-05-10 | Total findings: 21 | Open: 4 | Fixed: 17
+Last updated: 2026-05-10 | Total findings: 21 | Open: 0 | Fixed: 21
 
 ## Severity Definitions
 
@@ -26,12 +26,7 @@ Last updated: 2026-05-10 | Total findings: 21 | Open: 4 | Fixed: 17
 
 ## Open Findings
 
-| ID | Severity | Category | Summary | Scenario |
-|----|----------|----------|---------|----------|
-| F-018 | Major | MCP | `list_warehouse_tables` only shows GCS tables when `catalog: gcp` — local warehouse is invisible to MCP | warehouse-transformation |
-| F-019 | Minor | UX | `query_warehouse` auto-LIMIT wrapping breaks COPY/DDL with cryptic parse error | warehouse-transformation |
-| F-020 | Enhancement | MCP | No `materialize_model` MCP tool — model persistence requires manual COPY TO or Python connector workaround | warehouse-transformation |
-| F-021 | Minor | UX | Querying local-only table when `catalog: gcp` gives raw DuckDB CatalogException with no actionable guidance | warehouse-transformation |
+None — all findings resolved.
 
 ---
 
@@ -56,6 +51,10 @@ Last updated: 2026-05-10 | Total findings: 21 | Open: 4 | Fixed: 17
 | F-015 | No `pvc gcp teardown` command | `cli.py` — added `pvc gcp teardown`; `terraform.py` — added `destroy()`; `bootstrap.py` — added `delete_secret` + `delete_service_account` | |
 | F-016 | README GCP section missing Terraform, billing, and API prerequisites | `README.md` — added GCP prerequisites section with required APIs and setup commands | |
 | F-017 | `bootstrap.py` hardcoded `quipu-lake` as SA ID and secret name | `gcp/bootstrap.py` — renamed to `pvc-lake` throughout | |
+| F-018 | `list_warehouse_tables` only shows GCS tables when `catalog: gcp` | `warehouse_reader.py` — _iter_local_tables() helper; list_tables() now shows both GCS (location='gcs') and local-only (location='local') | `2f5d057` |
+| F-019 | `query_warehouse` auto-LIMIT wrapping broke COPY/DDL with cryptic parse error | `warehouse_reader.py` — _is_write_statement() detects write prefixes; DDL bypasses wrapping | `2f5d057` |
+| F-020 | No `materialize_model` MCP tool — model persistence required workarounds | `warehouse_reader.py` + `mcp_server.py` — new materialize_model() writes result Parquet locally and uploads to GCS when catalog=gcp | `2f5d057` |
+| F-021 | Querying local-only table in GCP mode gave cryptic DuckDB CatalogException | `warehouse_reader.py` — _resolve_table_refs() now falls back to local read_parquet() for tables not in GCS | `2f5d057` |
 
 ---
 
