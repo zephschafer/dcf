@@ -52,9 +52,11 @@ print(resp.json())
 ```
 
 Key questions to answer:
+- Is this a **GraphQL API** (POST with a query body)? → `type: python` — `type: http` cannot send a dynamic POST body
 - Does the response contain a flat array of records? → `type: http` with `records_path`
 - Does it return parallel arrays (e.g. `{"time": [...], "value": [...]}`)? → `type: python` to reshape
-- Does it require pagination, HTML parsing, or multi-step auth? → `type: python`
+- Does pagination require reading the response first (e.g. `next_cursor`, `pageInfo.endCursor`)? → `type: python`
+- Does it require HTML parsing or multi-step auth? → `type: python`
 - What fields are available and what are their names exactly?
 
 ## 4. Reference existing pipelines
@@ -63,9 +65,34 @@ Use `list_pipelines` to see what already exists. Use `get_pipeline` on the most 
 
 ## 5. Choose source type and design the pipeline
 
-**`type: http`** — for REST APIs that return a clean records array (JSON or CSV). pvc constructs the request and parses the response automatically.
+Pick the source type **before** writing any YAML. The wrong choice requires a full rewrite.
 
-**`type: python`** — for anything requiring custom logic: response reshaping, HTML scraping, pagination that depends on response content, multi-step auth. Write a function in `connectors/` that receives params and returns `list[dict]`.
+### Use `type: http` when all of these are true:
+- The request is a **GET** (or a POST with a **static** body — rare)
+- Auth is a header, bearer token, or query param (no pre-request needed)
+- Pagination is **date-range or categorical** — pvc iterates over known values upfront
+- The response is **JSON with a records array** or **CSV**
+
+**Examples:** GitHub REST API, Portland Maps API, OpenWeatherMap, any REST endpoint that returns `{"data": [...]}`.
+
+### Use `type: python` when any of these is true:
+- The API is **GraphQL** — requires a POST body with a dynamic query string; `type: http` cannot express this
+- **Cursor pagination** — the next-page token comes from the response (e.g. `pageInfo.endCursor`); you must read the response to know what to request next
+- **Response reshaping** — the payload isn't a flat records array (parallel arrays, nested objects that must be flattened, multi-response joins)
+- **HTML scraping** — requires BeautifulSoup or similar; `type: http` only handles JSON/CSV
+- **Multi-step auth** — OAuth token exchange, session cookies, or any flow requiring a pre-request before the data request
+
+**Examples:** Linear GraphQL API, Craigslist (HTML scraping), Stripe pagination (cursor-based), any API with `{"next_cursor": "..."}` in the response.
+
+### Quick rule of thumb
+
+> If you had to write a `while True` pagination loop or a `requests.post(json={"query": ...})` call, use `type: python`. If a single `requests.get` with URL params is enough, use `type: http`.
+
+---
+
+**`type: http`** — pvc constructs the request and parses the response automatically.
+
+**`type: python`** — write a function in `connectors/` that receives params and returns `list[dict]`. The function is responsible for the full fetch-and-return cycle for one iteration, including all pagination.
 
 ### For `type: python`: design the scraper function
 
