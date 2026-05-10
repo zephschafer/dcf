@@ -6,6 +6,9 @@ For catalog: gcp    — downloads Parquet blobs from GCS via google-cloud-storag
                       registers them as Arrow tables in DuckDB, then rewrites
                       namespace.table references to the registered names.
 
+list_tables()       returns BOTH GCS and local-only tables when catalog: gcp,
+                    with a `location` field ("gcs" | "local") on each row.
+
 Returns at most 500 rows per query.
 """
 from __future__ import annotations
@@ -14,6 +17,9 @@ from pathlib import Path
 from typing import Any
 
 _MAX_ROWS = 500
+
+# SQL statement types that must NOT be wrapped in SELECT … LIMIT.
+_WRITE_PREFIXES = {"copy", "create", "insert", "drop", "delete", "update", "alter"}
 
 
 def _project_config() -> dict:
@@ -71,28 +77,123 @@ def _gcs_table_key(namespace: str, table: str) -> str:
     return f"_gcs_{namespace}_{table}"
 
 
-def list_tables() -> list[dict[str, Any]]:
-    """Return all tables in the warehouse with column schemas and row counts."""
-    import duckdb
+def _is_write_statement(sql: str) -> bool:
+    """Return True if sql is a write/DDL statement that must not be wrapped in SELECT … LIMIT."""
+    first_word = sql.strip().split()[0].lower() if sql.strip() else ""
+    return first_word in _WRITE_PREFIXES
 
-    catalog = _catalog()
+
+def _iter_local_tables() -> list[tuple[str, str, Path]]:
+    """Yield (namespace, table, data_dir) for every local warehouse table with parquet data."""
+    warehouse = _warehouse()
+    if not warehouse.exists():
+        return []
     results = []
+    for ns_dir in sorted(warehouse.iterdir()):
+        if not ns_dir.is_dir():
+            continue
+        for table_dir in sorted(ns_dir.iterdir()):
+            if not table_dir.is_dir():
+                continue
+            data_dir = table_dir / "data"
+            if data_dir.exists() and list(data_dir.glob("*.parquet")):
+                results.append((ns_dir.name, table_dir.name, data_dir))
+    return results
+
+
+def _resolve_table_refs(sql: str, conn, catalog: str) -> str:
+    """
+    Rewrite namespace.table references in sql to DuckDB-readable form.
+
+    GCS tables (catalog=gcp) → registered as Arrow tables in conn (priority).
+    Local tables → rewritten to read_parquet(glob).  In GCP mode this acts as
+    a fallback so that local-only tables work transparently without an error (F-021).
+    """
+    import re
+
+    resolved = sql
+    gcs_pairs: set[tuple[str, str]] = set()
 
     if catalog == "gcp":
         bucket = _gcs_bucket()
-        if not bucket:
-            return results
-        conn = duckdb.connect()
-        for namespace, table in _iter_gcs_tables(bucket):
-            arrow_table = _load_gcs_table(bucket, namespace, table)
-            if arrow_table is None:
+        if bucket:
+            for namespace, table in _iter_gcs_tables(bucket):
+                pattern = rf"\b{re.escape(namespace)}\.{re.escape(table)}\b"
+                if re.search(pattern, resolved):
+                    arrow_table = _load_gcs_table(bucket, namespace, table)
+                    if arrow_table is not None:
+                        key = _gcs_table_key(namespace, table)
+                        conn.register(key, arrow_table)
+                        resolved = re.sub(pattern, key, resolved)
+                gcs_pairs.add((namespace, table))
+
+    # Resolve local tables — for local catalog, or as GCP fallback for local-only tables
+    for namespace, table, data_dir in _iter_local_tables():
+        if (namespace, table) in gcs_pairs:
+            continue
+        pattern = rf"\b{re.escape(namespace)}\.{re.escape(table)}\b"
+        glob = str(data_dir / "*.parquet")
+        resolved = re.sub(pattern, f"read_parquet('{glob}')", resolved)
+
+    return resolved
+
+
+def list_tables() -> list[dict[str, Any]]:
+    """
+    Return all tables in the warehouse with column schemas and row counts.
+
+    When catalog=gcp, returns BOTH GCS tables (location='gcs') and local-only
+    tables that have not been synced to GCS (location='local').
+    """
+    import duckdb
+
+    catalog = _catalog()
+    results: list[dict[str, Any]] = []
+
+    if catalog == "gcp":
+        bucket = _gcs_bucket()
+        gcs_pairs: set[tuple[str, str]] = set()
+
+        if bucket:
+            conn = duckdb.connect()
+            for namespace, table in _iter_gcs_tables(bucket):
+                arrow_table = _load_gcs_table(bucket, namespace, table)
+                if arrow_table is None:
+                    continue
+                key = _gcs_table_key(namespace, table)
+                try:
+                    conn.register(key, arrow_table)
+                    row_count = conn.execute(f"SELECT COUNT(*) FROM {key}").fetchone()[0]
+                    cols = conn.execute(f"DESCRIBE SELECT * FROM {key} LIMIT 0").fetchall()
+                    columns = [{"name": c[0], "type": c[1]} for c in cols]
+                except Exception as e:
+                    row_count = -1
+                    columns = [{"error": str(e)}]
+                results.append({
+                    "namespace": namespace,
+                    "table": table,
+                    "full_name": f"{namespace}.{table}",
+                    "row_count": row_count,
+                    "columns": columns,
+                    "location": "gcs",
+                })
+                gcs_pairs.add((namespace, table))
+            conn.close()
+
+        # Also list local-only tables not yet in GCS (F-018)
+        for namespace, table, data_dir in _iter_local_tables():
+            if (namespace, table) in gcs_pairs:
                 continue
-            key = _gcs_table_key(namespace, table)
+            glob = str(data_dir / "*.parquet")
             try:
-                conn.register(key, arrow_table)
-                row_count = conn.execute(f"SELECT COUNT(*) FROM {key}").fetchone()[0]
-                cols = conn.execute(f"DESCRIBE SELECT * FROM {key} LIMIT 0").fetchall()
+                conn2 = duckdb.connect()
+                info = conn2.execute(f"SELECT COUNT(*) as n FROM read_parquet('{glob}')").fetchone()
+                row_count = info[0] if info else 0
+                cols = conn2.execute(
+                    f"DESCRIBE SELECT * FROM read_parquet('{glob}') LIMIT 0"
+                ).fetchall()
                 columns = [{"name": c[0], "type": c[1]} for c in cols]
+                conn2.close()
             except Exception as e:
                 row_count = -1
                 columns = [{"error": str(e)}]
@@ -102,45 +203,34 @@ def list_tables() -> list[dict[str, Any]]:
                 "full_name": f"{namespace}.{table}",
                 "row_count": row_count,
                 "columns": columns,
+                "location": "local",
             })
-        conn.close()
+
         return results
 
     # local catalog
-    warehouse = _warehouse()
-    if not warehouse.exists():
-        return results
-
-    for ns_dir in sorted(warehouse.iterdir()):
-        if not ns_dir.is_dir():
-            continue
-        for table_dir in sorted(ns_dir.iterdir()):
-            if not table_dir.is_dir():
-                continue
-            data_dir = table_dir / "data"
-            parquet_files = list(data_dir.glob("*.parquet")) if data_dir.exists() else []
-            if not parquet_files:
-                continue
-
-            glob = str(data_dir / "*.parquet")
-            try:
-                conn = duckdb.connect()
-                info = conn.execute(f"SELECT COUNT(*) as n FROM read_parquet('{glob}')").fetchone()
-                row_count = info[0] if info else 0
-                cols = conn.execute(f"DESCRIBE SELECT * FROM read_parquet('{glob}') LIMIT 0").fetchall()
-                columns = [{"name": c[0], "type": c[1]} for c in cols]
-                conn.close()
-            except Exception as e:
-                row_count = -1
-                columns = [{"error": str(e)}]
-
-            results.append({
-                "namespace": ns_dir.name,
-                "table": table_dir.name,
-                "full_name": f"{ns_dir.name}.{table_dir.name}",
-                "row_count": row_count,
-                "columns": columns,
-            })
+    for namespace, table, data_dir in _iter_local_tables():
+        glob = str(data_dir / "*.parquet")
+        try:
+            conn = duckdb.connect()
+            info = conn.execute(f"SELECT COUNT(*) as n FROM read_parquet('{glob}')").fetchone()
+            row_count = info[0] if info else 0
+            cols = conn.execute(
+                f"DESCRIBE SELECT * FROM read_parquet('{glob}') LIMIT 0"
+            ).fetchall()
+            columns = [{"name": c[0], "type": c[1]} for c in cols]
+            conn.close()
+        except Exception as e:
+            row_count = -1
+            columns = [{"error": str(e)}]
+        results.append({
+            "namespace": namespace,
+            "table": table,
+            "full_name": f"{namespace}.{table}",
+            "row_count": row_count,
+            "columns": columns,
+            "location": "local",
+        })
 
     return results
 
@@ -150,49 +240,84 @@ def query(sql: str) -> list[dict[str, Any]]:
     Run a SQL query against the warehouse.
 
     Table references use the form  namespace.table  — e.g.
-        SELECT * FROM portland_permits.permits_loader LIMIT 10
+        SELECT neighborhood, AVG(CAST(price AS DOUBLE)) as avg_price
+        FROM craigslist_apts.craigslist_apts
+        GROUP BY 1
+        ORDER BY 2 DESC
 
-    The server rewrites these to DuckDB read_parquet() calls (local) or
-    registered Arrow tables (GCS) automatically.
-    Returns at most 500 rows.
+    Write statements (COPY, CREATE, INSERT, etc.) are executed as-is without
+    being wrapped in SELECT … LIMIT.  SELECT queries are automatically capped
+    at 500 rows unless the caller includes a LIMIT clause.
+
+    Returns at most 500 rows for SELECT queries.
     """
     import duckdb
-    import re
 
     catalog = _catalog()
     conn = duckdb.connect()
-    resolved = sql
+    resolved = _resolve_table_refs(sql, conn, catalog)
 
-    if catalog == "gcp":
-        bucket = _gcs_bucket()
-        for namespace, table in _iter_gcs_tables(bucket):
-            pattern = rf"\b{re.escape(namespace)}\.{re.escape(table)}\b"
-            if re.search(pattern, resolved):
-                arrow_table = _load_gcs_table(bucket, namespace, table)
-                if arrow_table is not None:
-                    key = _gcs_table_key(namespace, table)
-                    conn.register(key, arrow_table)
-                    resolved = re.sub(pattern, key, resolved)
-    else:
-        warehouse = _warehouse()
-        if warehouse.exists():
-            for ns_dir in warehouse.iterdir():
-                if not ns_dir.is_dir():
-                    continue
-                for table_dir in ns_dir.iterdir():
-                    if not table_dir.is_dir():
-                        continue
-                    data_dir = table_dir / "data"
-                    if not data_dir.exists() or not list(data_dir.glob("*.parquet")):
-                        continue
-                    pattern = rf"\b{re.escape(ns_dir.name)}\.{re.escape(table_dir.name)}\b"
-                    glob = str(data_dir / "*.parquet")
-                    resolved = re.sub(pattern, f"read_parquet('{glob}')", resolved)
-
-    if "limit" not in resolved.lower():
+    # F-019: skip auto-LIMIT for write/DDL statements
+    if not _is_write_statement(resolved) and "limit" not in resolved.lower():
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {_MAX_ROWS}"
 
-    rows = conn.execute(resolved).fetchall()
+    try:
+        rows = conn.execute(resolved).fetchall()
+    except Exception:
+        conn.close()
+        raise
+
     cols = [d[0] for d in conn.description]
     conn.close()
     return [dict(zip(cols, row)) for row in rows]
+
+
+def materialize_model(sql: str, namespace: str, table: str) -> dict[str, Any]:
+    """
+    Run sql and write the result as a new warehouse table at namespace/table.
+
+    Writes locally to warehouse/<namespace>/<table>/data/part-001.parquet.
+    If catalog=gcp, also uploads the Parquet to the GCS warehouse bucket so
+    the model is immediately queryable via query_warehouse() and visible in
+    list_warehouse_tables().
+
+    Returns a dict with ok, namespace, table, row_count, and location.
+    """
+    import duckdb
+    import pyarrow.parquet as pq
+
+    catalog = _catalog()
+    conn = duckdb.connect()
+    resolved = _resolve_table_refs(sql, conn, catalog)
+
+    arrow_result = conn.execute(resolved).arrow()
+    if hasattr(arrow_result, "read_all"):
+        arrow_result = arrow_result.read_all()  # RecordBatchReader → Table
+    row_count = arrow_result.num_rows
+    conn.close()
+
+    out_dir = _warehouse() / namespace / table / "data"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "part-001.parquet"
+    pq.write_table(arrow_result, out_path)
+
+    location = str(out_path)
+
+    if catalog == "gcp":
+        bucket_name = _gcs_bucket()
+        if bucket_name:
+            from google.cloud import storage as gcs_storage
+            client = gcs_storage.Client()
+            gcs_bucket = client.bucket(bucket_name)
+            blob_name = f"{namespace}/{table}/data/part-001.parquet"
+            blob = gcs_bucket.blob(blob_name)
+            blob.upload_from_filename(str(out_path))
+            location = f"gs://{bucket_name}/{blob_name}"
+
+    return {
+        "ok": True,
+        "namespace": namespace,
+        "table": table,
+        "row_count": row_count,
+        "location": location,
+    }

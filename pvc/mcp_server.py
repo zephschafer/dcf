@@ -10,8 +10,9 @@ list_pipelines        — discover what pipelines exist
 get_pipeline          — read a pipeline YAML
 validate_pipeline     — check YAML is valid without running
 run_pipeline          — execute a pipeline (use limit for testing)
-list_warehouse_tables — see what's in the warehouse
+list_warehouse_tables — see what's in the warehouse (GCS + local)
 query_warehouse       — run SQL against warehouse data (DuckDB, instant)
+materialize_model     — run SQL and persist the result as a new warehouse table
 write_pipeline        — create or update a pipeline YAML
 write_connector       — create or update a Python connector module
 """
@@ -153,8 +154,13 @@ def run_pipeline(
 @mcp.tool()
 def list_warehouse_tables() -> list[dict[str, Any]]:
     """
-    List all tables in the local warehouse with row counts and column schemas.
+    List all tables in the warehouse with row counts and column schemas.
     Uses DuckDB — no Spark startup required.
+
+    Each entry includes a `location` field:
+      "gcs"   — table is in the GCS bucket (queryable by namespace.table)
+      "local" — table exists only in the local warehouse (use read_parquet() or
+                 materialize_model() to promote it to GCS)
     """
     from .warehouse_reader import list_tables
     return list_tables()
@@ -180,6 +186,33 @@ def query_warehouse(sql: str) -> list[dict[str, Any]]:
         return query(sql)
     except Exception as e:
         return [{"error": str(e)}]
+
+
+@mcp.tool()
+def materialize_model(sql: str, namespace: str, table: str) -> dict[str, Any]:
+    """
+    Run a SQL query and persist the result as a new warehouse table.
+
+    This is the pvc equivalent of `dbt run` for a single model: it executes
+    the SQL, writes the result to warehouse/<namespace>/<table>/data/part-001.parquet,
+    and (when catalog=gcp) uploads it to the GCS bucket so it is immediately
+    visible in list_warehouse_tables() and queryable via query_warehouse().
+
+    Example — create a repo activity summary model:
+        materialize_model(
+            sql="SELECT language, COUNT(*) AS repo_count FROM github.github_repos GROUP BY 1",
+            namespace="github",
+            table="repo_language_summary",
+        )
+
+    The sql argument follows the same namespace.table rewriting rules as
+    query_warehouse(): reference tables as namespace.table and pvc resolves them.
+    """
+    from .warehouse_reader import materialize_model as _materialize
+    try:
+        return _materialize(sql, namespace, table)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 # ------------------------------------------------------------------ #

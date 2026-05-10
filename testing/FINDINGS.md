@@ -1,6 +1,6 @@
 # pvc Core Limitations Tracker
 
-Last updated: 2026-05-10 | Total findings: 17 | Open: 0 | Fixed: 17
+Last updated: 2026-05-10 | Total findings: 21 | Open: 4 | Fixed: 17
 
 ## Severity Definitions
 
@@ -26,7 +26,12 @@ Last updated: 2026-05-10 | Total findings: 17 | Open: 0 | Fixed: 17
 
 ## Open Findings
 
-None — all findings resolved.
+| ID | Severity | Category | Summary | Scenario |
+|----|----------|----------|---------|----------|
+| F-018 | Major | MCP | `list_warehouse_tables` only shows GCS tables when `catalog: gcp` — local warehouse is invisible to MCP | warehouse-transformation |
+| F-019 | Minor | UX | `query_warehouse` auto-LIMIT wrapping breaks COPY/DDL with cryptic parse error | warehouse-transformation |
+| F-020 | Enhancement | MCP | No `materialize_model` MCP tool — model persistence requires manual COPY TO or Python connector workaround | warehouse-transformation |
+| F-021 | Minor | UX | Querying local-only table when `catalog: gcp` gives raw DuckDB CatalogException with no actionable guidance | warehouse-transformation |
 
 ---
 
