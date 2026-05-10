@@ -1,0 +1,63 @@
+version: 1
+name: github_private_repos
+namespace: github
+description: Private GitHub repositories for the authenticated user
+
+source:
+  type: http
+  url: https://api.github.com/user/repos
+  method: GET
+  auth:
+    type: bearer
+    key: token
+    value: "{{ env.GITHUB_TOKEN }}"
+  params:
+    - name: visibility
+      type: string
+      value: private
+    - name: per_page
+      type: integer
+      value: 100
+
+schema:
+  columns:
+    - name: id
+      path: id
+      type: integer
+    - name: name
+      path: name
+      type: string
+    - name: full_name
+      path: full_name
+      type: string
+    - name: private
+      path: private
+      type: boolean
+    - name: description
+      path: description
+      type: string
+    - name: language
+      path: language
+      type: string
+    - name: stargazers_count
+      path: stargazers_count
+      type: integer
+    - name: forks_count
+      path: forks_count
+      type: integer
+    - name: created_at
+      path: created_at
+      type: timestamp
+    - name: updated_at
+      path: updated_at
+      type: timestamp
+    - name: default_branch
+      path: default_branch
+      type: string
+    - name: visibility
+      path: visibility
+      type: string
+
+build:
+  strategy: incremental
+  primary_key: id
