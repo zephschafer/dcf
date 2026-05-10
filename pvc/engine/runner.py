@@ -53,5 +53,8 @@ def run_pipeline(
 
         iceberg_writer.write(spark, pipeline, df, catalog=catalog, dynamic_params=dynamic_params)
 
-    print(f"\n[pvc] '{pipeline.name}' complete\n")
+    from ..project import find_project_root
+    namespace = pipeline.namespace or pipeline.name
+    warehouse_path = find_project_root() / "warehouse" / namespace / pipeline.name / "data"
+    print(f"\n[pvc] '{pipeline.name}' complete → {warehouse_path}\n")
     spark.stop()

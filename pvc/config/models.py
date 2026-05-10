@@ -169,6 +169,7 @@ class Build(BaseModel):
 class Pipeline(BaseModel):
     version: int = 1
     name: str
+    namespace: str | None = None   # warehouse namespace; defaults to pipeline name when absent
     description: str | None = None
     source: Source
     schema_: Schema

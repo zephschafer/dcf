@@ -43,7 +43,7 @@ def write(
     df = df.copy()
     df["pvc_updated_at"] = _pst_now()
 
-    namespace = pipeline.name
+    namespace = pipeline.namespace or pipeline.name
     _ensure_namespace(spark, catalog, namespace)
 
     build = pipeline.build
