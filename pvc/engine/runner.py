@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import textwrap
+import traceback
+
 from ..config.models import Pipeline, PythonSource
 from .iterator import build_request_sequence
 from .fetcher import fetch_records
@@ -27,6 +30,8 @@ def run_pipeline(
 
     print(f"\n[pvc] Running '{pipeline.name}' — {len(request_sequence)} requests\n")
 
+    failed = 0
+
     for i, dynamic_params in enumerate(request_sequence, 1):
         label = " ".join(f"{k}={v}" for k, v in dynamic_params.items())
         print(f"  [{i}/{len(request_sequence)}] {label}")
@@ -41,7 +46,9 @@ def run_pipeline(
         try:
             records = fetch_records(pipeline.source, source_params)
         except Exception as e:
-            print(f"    fetch error: {e}")
+            failed += 1
+            print(f"    fetch error ({type(e).__name__}): {e}")
+            print(textwrap.indent(traceback.format_exc(), "      "))
             continue
 
         if not records:
@@ -61,5 +68,13 @@ def run_pipeline(
     else:
         from ..project import find_project_root
         dest = str(find_project_root() / "warehouse" / namespace / pipeline.name / "data")
-    print(f"\n[pvc] '{pipeline.name}' complete → {dest}\n")
+
+    total = len(request_sequence)
+    if failed == total:
+        print(f"\n[pvc] '{pipeline.name}' FAILED — all {total} iteration(s) errored → {dest}\n")
+    elif failed:
+        print(f"\n[pvc] '{pipeline.name}' complete with errors — {failed}/{total} iteration(s) failed → {dest}\n")
+    else:
+        print(f"\n[pvc] '{pipeline.name}' complete → {dest}\n")
+
     spark.stop()
