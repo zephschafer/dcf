@@ -1,6 +1,6 @@
 # pvc Core Limitations Tracker
 
-Last updated: 2026-05-10 | Total findings: 25 | Open: 3 | Fixed: 22
+Last updated: 2026-05-10 | Total findings: 25 | Open: 2 | Fixed: 23
 
 ## Severity Definitions
 
@@ -28,7 +28,6 @@ Last updated: 2026-05-10 | Total findings: 25 | Open: 3 | Fixed: 22
 
 | ID | Severity | Category | Summary | Scenario |
 |----|----------|----------|---------|----------|
-| F-023 | Minor | UX | Connector exceptions produce only `fetch error: {e}` — no traceback, no failure summary; pipeline reports "complete" even if all iterations failed | python-connector |
 | F-024 | Enhancement | Skill | `new-pipeline` skill missing decision guidance on when to use `type: python` vs `type: http` (e.g. GraphQL POST body, cursor pagination) | python-connector |
 | F-025 | Enhancement | Skill | `new-pipeline` skill doesn't document auth pattern for Python connectors — `PythonSource` has no `auth` field; correct pattern (pass key as `{{ env.VAR }}` param) is undocumented | python-connector |
 
@@ -60,6 +59,7 @@ Last updated: 2026-05-10 | Total findings: 25 | Open: 3 | Fixed: 22
 | F-020 | No `materialize_model` MCP tool — model persistence required workarounds | `warehouse_reader.py` + `mcp_server.py` — new materialize_model() writes result Parquet locally and uploads to GCS when catalog=gcp | `2f5d057` |
 | F-021 | Querying local-only table in GCP mode gave cryptic DuckDB CatalogException | `warehouse_reader.py` — _resolve_table_refs() now falls back to local read_parquet() for tables not in GCS | `2f5d057` |
 | F-022 | MCP `run_pipeline` ignored `catalog: gcp` — always wrote to local warehouse | `mcp_server.py` — reads `_project_config().get("catalog", "local")` before calling runner | `c8ea972` |
+| F-023 | Connector exceptions showed only `fetch error: {e}` — no traceback, no failure summary | `runner.py` — adds exception class, full traceback (indented), and 3-state completion line (complete / complete with errors / FAILED) | `a1041e0` |
 
 ---
 
