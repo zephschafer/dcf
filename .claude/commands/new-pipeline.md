@@ -94,6 +94,31 @@ Pick the source type **before** writing any YAML. The wrong choice requires a fu
 
 **`type: python`** — write a function in `connectors/` that receives params and returns `list[dict]`. The function is responsible for the full fetch-and-return cycle for one iteration, including all pagination.
 
+### For `type: python`: auth pattern
+
+`PythonSource` has **no `auth` block** in the YAML — there is no `auth:` field for python connectors. Pass the API key as a static param instead, and read it from `dynamic_params` inside the connector:
+
+**Pipeline YAML:**
+```yaml
+source:
+  type: python
+  module: connectors.my_connector
+  function: fetch_data
+  params:
+    - name: api_key
+      value: "{{ env.MY_API_KEY }}"
+```
+
+**Connector:**
+```python
+def fetch_data(dynamic_params: dict) -> list[dict]:
+    api_key = dynamic_params["api_key"]  # resolved from MY_API_KEY env var
+    headers = {"Authorization": f"Bearer {api_key}"}
+    ...
+```
+
+`{{ env.MY_API_KEY }}` is resolved by pvc before the connector is called — the connector always receives the real value, never the placeholder string.
+
 ### For `type: python`: design the scraper function
 
 The function signature is always:
@@ -102,7 +127,7 @@ def fetch_data(dynamic_params: dict) -> list[dict]:
     ...
 ```
 
-`dynamic_params` contains ALL params: both iterate values (e.g. `city=portland`) and static params from the YAML (e.g. `start_date`, `max_records`). The function is responsible for the full fetch-and-return cycle for one iteration.
+`dynamic_params` contains ALL params: both iterate values (e.g. `city=portland`) and static params from the YAML (e.g. `start_date`, `max_records`, `api_key`). The function is responsible for the full fetch-and-return cycle for one iteration.
 
 Important: pvc passes static param values as-is from the YAML. If the YAML has `value: "today"`, the function receives the literal string `"today"` — it does not get resolved to a date. Handle this in the function:
 ```python
