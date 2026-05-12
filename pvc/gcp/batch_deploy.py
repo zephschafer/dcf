@@ -51,7 +51,7 @@ def deploy(
     )
 
     print("  Locating Cloud Composer environment...", flush=True)
-    composer_env_name, dag_bucket = _find_composer_env(project_id, region)
+    composer_env_name, dag_bucket = _find_or_create_composer_env(project_id, region, sa_email)
     print(f"  Using Composer environment: {composer_env_name}", flush=True)
 
     print(f"  Uploading DAG '{dag_id}' to Composer...", flush=True)
@@ -78,7 +78,7 @@ def undeploy(pipeline_name: str, deployment: dict, gcp_config: dict) -> None:
     if composer_env:
         print(f"  Removing Composer DAG '{dag_id}'...")
         try:
-            _, dag_bucket = _find_composer_env(project_id, region)
+            dag_bucket = _describe_composer_dag_bucket(composer_env, project_id, region)
             _delete_dag_file(dag_id, dag_bucket)
         except Exception as e:
             print(f"  Warning: could not remove DAG file: {e}")
@@ -254,8 +254,34 @@ def _delete_cloud_run_job(job_name: str, project_id: str, region: str) -> None:
 # Cloud Composer DAG                                                   #
 # ------------------------------------------------------------------ #
 
-def _find_composer_env(project_id: str, region: str) -> tuple[str, str]:
-    """Return (env_name, dag_gcs_prefix) for the first Composer environment found."""
+def _describe_composer_dag_bucket(env_name: str, project_id: str, region: str) -> str:
+    """Return the dagGcsPrefix for a known Composer environment by name."""
+    import json
+    result = subprocess.run(
+        [
+            "gcloud", "composer", "environments", "describe", env_name,
+            "--location", region, "--project", project_id,
+            "--format", "json",
+        ],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to describe Composer environment '{env_name}': {result.stderr}")
+    return json.loads(result.stdout)["config"]["dagGcsPrefix"]
+
+
+def _find_or_create_composer_env(
+    project_id: str, region: str, sa_email: str
+) -> tuple[str, str]:
+    """Return (env_name, dag_gcs_prefix) for a RUNNING Composer environment.
+
+    If none exists, creates 'pvc-composer' and polls until it reaches RUNNING state
+    (typically 20–30 minutes). Raises RuntimeError if creation fails or the
+    environment reaches an ERROR state.
+    """
+    import json
+    import time
+
     result = subprocess.run(
         [
             "gcloud", "composer", "environments", "list",
@@ -268,27 +294,83 @@ def _find_composer_env(project_id: str, region: str) -> tuple[str, str]:
         raise RuntimeError(
             f"Failed to list Composer environments: {result.stderr}\n"
             "Ensure the API is enabled:\n"
-            "  gcloud services enable composer.googleapis.com\n"
-            "And that a Composer environment exists in the project."
+            "  gcloud services enable composer.googleapis.com"
         )
 
-    import json
     envs = json.loads(result.stdout)
-    if not envs:
+    if envs:
+        env = envs[0]
+        env_name = env["name"].split("/")[-1]
+        dag_bucket = env["config"]["dagGcsPrefix"]
+        return env_name, dag_bucket
+
+    # No environment found — create one
+    env_name = "pvc-composer"
+    print(
+        f"\n  No Cloud Composer environment found in {project_id}/{region}.\n"
+        f"  Provisioning '{env_name}' (this takes 20–30 minutes)...",
+        flush=True,
+    )
+    create_result = subprocess.run(
+        [
+            "gcloud", "composer", "environments", "create", env_name,
+            "--location", region,
+            "--project", project_id,
+            "--environment-size", "small",
+            "--service-account", sa_email,
+            "--async",
+        ],
+        capture_output=True, text=True,
+    )
+    if create_result.returncode != 0:
         raise RuntimeError(
-            f"No Cloud Composer environments found in {project_id}/{region}.\n"
-            "Create one first (takes 15–30 min):\n"
-            f"  gcloud composer environments create pvc-composer \\\n"
-            f"    --location {region} --project {project_id} \\\n"
-            f"    --environment-size=small \\\n"
-            f"    --service-account <your-sa-email>\n"
-            "Then re-run: pvc deploy <pipeline-name>"
+            f"Failed to create Composer environment: {create_result.stderr}\n"
+            "Ensure the API is enabled and the service account has roles/composer.worker:\n"
+            "  gcloud services enable composer.googleapis.com\n"
+            f"  gcloud projects add-iam-policy-binding {project_id} \\\n"
+            f"    --member=serviceAccount:{sa_email} --role=roles/composer.worker"
         )
 
-    env = envs[0]
-    env_name = env["name"].split("/")[-1]
-    dag_bucket = env["config"]["dagGcsPrefix"]
-    return env_name, dag_bucket
+    # Poll until RUNNING or ERROR
+    poll_interval = 30
+    timeout_secs = 40 * 60  # 40-minute ceiling
+    elapsed = 0
+    dots = 0
+    while elapsed < timeout_secs:
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+        dots += 1
+        print(f"  Still provisioning{'.' * (dots % 4 + 1)} ({elapsed // 60}m elapsed)", flush=True)
+
+        state_result = subprocess.run(
+            [
+                "gcloud", "composer", "environments", "describe", env_name,
+                "--location", region, "--project", project_id,
+                "--format", "json",
+            ],
+            capture_output=True, text=True,
+        )
+        if state_result.returncode != 0:
+            continue  # transient describe failure — keep polling
+
+        env_data = json.loads(state_result.stdout)
+        state = env_data.get("state", "")
+        if state == "RUNNING":
+            dag_bucket = env_data["config"]["dagGcsPrefix"]
+            print(f"  Composer environment '{env_name}' is ready.", flush=True)
+            return env_name, dag_bucket
+        if state == "ERROR":
+            raise RuntimeError(
+                f"Composer environment '{env_name}' entered ERROR state.\n"
+                "Check the GCP console for details:\n"
+                f"  https://console.cloud.google.com/composer/environments?project={project_id}"
+            )
+
+    raise RuntimeError(
+        f"Composer environment '{env_name}' did not reach RUNNING state within 40 minutes.\n"
+        "Check the GCP console for details:\n"
+        f"  https://console.cloud.google.com/composer/environments?project={project_id}"
+    )
 
 
 def _dag_content(dag_id: str, job_name: str, schedule: str, paused: bool,

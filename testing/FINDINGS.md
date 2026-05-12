@@ -1,6 +1,6 @@
 # pvc Core Limitations Tracker
 
-Last updated: 2026-05-12 | Total findings: 35 | Open: 1 | Fixed: 34
+Last updated: 2026-05-12 | Total findings: 35 | Open: 0 | Fixed: 35
 
 ## Severity Definitions
 
@@ -28,7 +28,8 @@ Last updated: 2026-05-12 | Total findings: 35 | Open: 1 | Fixed: 34
 
 | ID | Severity | Category | Summary | Scenario |
 |----|----------|----------|---------|----------|
-| F-033 | Major | Runtime | `pvc deploy` fails with "No Cloud Composer environments found" when no environment pre-exists — breaking the one-command deploy promise; should auto-provision a Composer environment (with a 20+ min warning) before uploading the DAG | batch-deployment |
+
+*No open findings.*
 
 ---
 
@@ -36,6 +37,7 @@ Last updated: 2026-05-12 | Total findings: 35 | Open: 1 | Fixed: 34
 
 | ID | Summary | Fixed In | Notes |
 |----|---------|----------|-------|
+| F-033 | `pvc deploy` failed with "No Cloud Composer environments found" when no environment pre-existed | `gcp/batch_deploy.py` — `_find_or_create_composer_env()` auto-provisions `pvc-composer` with `--async` + polls every 30s until RUNNING; `undeploy` uses new `_describe_composer_dag_bucket()` helper | |
 | F-034 | Cloud Run container exited immediately (`JAVA_GATEWAY_EXITED`) because `runner.py` unconditionally started Spark even when `catalog=gcp`; `python:3.12-slim` has no JVM | `engine/runner.py` — GCS path skips Spark init; `spark.stop()` guarded by `if spark is not None` | `0685e72` |
 | F-001 | Spark startup WARN noise obscured pvc output | `spark_session.py` — fd-level stderr redirect + `spark.driver.host=127.0.0.1` | |
 | F-002 | No `namespace` field; namespace always equalled pipeline name | `models.py` + `writer/iceberg.py` — optional `namespace` field with fallback to `pipeline.name` | |
