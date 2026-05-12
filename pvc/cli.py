@@ -149,9 +149,17 @@ def validate(
                 f"  Set them as environment variables or add to project.yml before running.",
                 err=True,
             )
-        typer.echo(f"OK — '{pipeline.name}' ({len(pipeline.source.params)} params, "
-                   f"{len(pipeline.source.iterate)} iterate axes, "
-                   f"{len(pipeline.schema_.columns)} columns)")
+        from .config.models import PubSubSource
+        if isinstance(pipeline.source, PubSubSource):
+            typer.echo(
+                f"OK — '{pipeline.name}' (streaming, "
+                f"subscription: {pipeline.source.subscription}, "
+                f"{len(pipeline.schema_.columns)} columns)"
+            )
+        else:
+            typer.echo(f"OK — '{pipeline.name}' ({len(pipeline.source.params)} params, "
+                       f"{len(pipeline.source.iterate)} iterate axes, "
+                       f"{len(pipeline.schema_.columns)} columns)")
 
 
 # ------------------------------------------------------------------ #
@@ -330,7 +338,7 @@ def _require_gcp_config() -> tuple[dict, dict]:
     cfg = _load_config()
     if cfg.get("catalog") != "gcp":
         typer.echo(
-            "Error: catalog is not 'gcp'. Batch deployment requires a GCP data lake.\n"
+            "Error: catalog is not 'gcp'. Deployment requires a GCP data lake.\n"
             "  Set catalog: gcp in project.yml or run: pvc init",
             err=True,
         )
@@ -353,9 +361,9 @@ def _require_gcp_config() -> tuple[dict, dict]:
 def deploy(
     pipeline_name: str = typer.Argument(..., help="Pipeline name (without .yml)"),
 ):
-    """Deploy a pipeline as a scheduled batch job on GCP (Composer + Cloud Run)."""
+    """Deploy a pipeline as a scheduled batch job or streaming job on GCP."""
     from .config import load_pipeline
-    from .gcp import batch_deploy
+    from .config.models import PubSubSource
 
     path = _pipelines_dir() / f"{pipeline_name}.yml"
     if not path.exists():
@@ -371,24 +379,45 @@ def deploy(
     if pipeline.deploy is None:
         typer.echo(
             f"Error: '{pipeline_name}' has no 'deploy:' block in its pipeline YAML.\n"
-            "Add a deploy block with a schedule, for example:\n\n"
+            "For a batch pipeline, add a deploy block with a schedule:\n\n"
             "  deploy:\n"
-            "    schedule: \"0 8 * * *\"\n",
+            "    schedule: \"0 8 * * *\"\n\n"
+            "For a streaming pipeline (source.type: pubsub), add:\n\n"
+            "  deploy:\n"
+            "    type: streaming\n"
+            "    window_seconds: 60\n",
             err=True,
         )
         raise typer.Exit(1)
 
     cfg, gcp = _require_gcp_config()
 
-    typer.echo(f"Deploying '{pipeline_name}' (schedule: {pipeline.deploy.schedule})...")
+    deploy_type = pipeline.deploy.type
     try:
-        state = batch_deploy.deploy(
-            pipeline_name=pipeline_name,
-            schedule=pipeline.deploy.schedule,
-            paused=pipeline.deploy.paused,
-            project_root=_project_root(),
-            gcp_config=gcp,
-        )
+        if deploy_type == "streaming":
+            from .gcp import streaming_deploy
+            assert isinstance(pipeline.source, PubSubSource)
+            typer.echo(
+                f"Deploying '{pipeline_name}' (streaming, "
+                f"subscription: {pipeline.source.subscription})..."
+            )
+            state = streaming_deploy.deploy(
+                pipeline_name=pipeline_name,
+                subscription=pipeline.source.subscription,
+                window_seconds=pipeline.deploy.window_seconds,
+                project_root=_project_root(),
+                gcp_config=gcp,
+            )
+        else:
+            from .gcp import batch_deploy
+            typer.echo(f"Deploying '{pipeline_name}' (schedule: {pipeline.deploy.schedule})...")
+            state = batch_deploy.deploy(
+                pipeline_name=pipeline_name,
+                schedule=pipeline.deploy.schedule,
+                paused=pipeline.deploy.paused,
+                project_root=_project_root(),
+                gcp_config=gcp,
+            )
     except Exception as e:
         typer.echo(f"\nDeploy failed: {e}", err=True)
         raise typer.Exit(1)
@@ -397,10 +426,16 @@ def deploy(
     _save_config(cfg)
 
     typer.echo(f"\nDeployed '{pipeline_name}' successfully.")
-    typer.echo(f"  DAG:          {state['dag_id']}")
-    typer.echo(f"  Cloud Run:    {state['cloud_run_job']}")
-    typer.echo(f"  Composer env: {state['composer_env']}")
-    typer.echo(f"  Schedule:     {state['schedule']}")
+    if deploy_type == "streaming":
+        typer.echo(f"  Type:         streaming")
+        typer.echo(f"  Dataflow job: {state['dataflow_job_name']}")
+        typer.echo(f"  Subscription: {state['subscription']}")
+        typer.echo(f"  Window:       {state['window_seconds']}s")
+    else:
+        typer.echo(f"  DAG:          {state['dag_id']}")
+        typer.echo(f"  Cloud Run:    {state['cloud_run_job']}")
+        typer.echo(f"  Composer env: {state['composer_env']}")
+        typer.echo(f"  Schedule:     {state['schedule']}")
 
 
 @app.command()
@@ -425,20 +460,37 @@ def undeploy(
     deployment = deployments[pipeline_name]
     _, gcp = _require_gcp_config()
 
+    deploy_type = deployment.get("type", "batch")
     if not yes:
-        typer.confirm(
-            f"Remove Cloud Run job '{deployment['cloud_run_job']}' and "
-            f"Composer DAG '{deployment['dag_id']}'? (warehouse data will NOT be deleted)",
-            abort=True,
-        )
+        if deploy_type == "streaming":
+            typer.confirm(
+                f"Drain and remove Dataflow job '{deployment.get('dataflow_job_name', pipeline_name)}'? "
+                "(warehouse data will NOT be deleted)",
+                abort=True,
+            )
+        else:
+            typer.confirm(
+                f"Remove Cloud Run job '{deployment['cloud_run_job']}' and "
+                f"Composer DAG '{deployment['dag_id']}'? (warehouse data will NOT be deleted)",
+                abort=True,
+            )
 
     typer.echo(f"Undeploying '{pipeline_name}'...")
     try:
-        batch_deploy.undeploy(
-            pipeline_name=pipeline_name,
-            deployment=deployment,
-            gcp_config=gcp,
-        )
+        if deploy_type == "streaming":
+            from .gcp import streaming_deploy
+            streaming_deploy.undeploy(
+                pipeline_name=pipeline_name,
+                deployment=deployment,
+                gcp_config=gcp,
+            )
+        else:
+            from .gcp import batch_deploy
+            batch_deploy.undeploy(
+                pipeline_name=pipeline_name,
+                deployment=deployment,
+                gcp_config=gcp,
+            )
     except Exception as e:
         typer.echo(f"\nUndeploy failed: {e}", err=True)
         raise typer.Exit(1)
@@ -471,10 +523,16 @@ def deploy_status(
 
     for name, state in targets.items():
         typer.echo(f"\n{name}")
-        typer.echo(f"  Schedule:     {state.get('schedule', '-')}")
-        typer.echo(f"  DAG:          {state.get('dag_id', '-')}")
-        typer.echo(f"  Cloud Run:    {state.get('cloud_run_job', '-')}")
-        typer.echo(f"  Composer env: {state.get('composer_env', '-')}")
+        if state.get("type") == "streaming":
+            typer.echo(f"  Type:         streaming")
+            typer.echo(f"  Dataflow job: {state.get('dataflow_job_name', '-')}")
+            typer.echo(f"  Subscription: {state.get('subscription', '-')}")
+            typer.echo(f"  Window:       {state.get('window_seconds', '-')}s")
+        else:
+            typer.echo(f"  Schedule:     {state.get('schedule', '-')}")
+            typer.echo(f"  DAG:          {state.get('dag_id', '-')}")
+            typer.echo(f"  Cloud Run:    {state.get('cloud_run_job', '-')}")
+            typer.echo(f"  Composer env: {state.get('composer_env', '-')}")
         typer.echo(f"  Deployed at:  {state.get('deployed_at', '-')}")
 
 

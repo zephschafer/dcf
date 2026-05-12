@@ -109,7 +109,13 @@ class PythonSource(BaseModel):
         return self
 
 
-Source = Annotated[Union[HttpSource, PythonSource], Field(discriminator="type")]
+class PubSubSource(BaseModel):
+    """Continuously reads JSON messages from a GCP Pub/Sub subscription."""
+    type: Literal["pubsub"]
+    subscription: str   # full resource path: projects/<project>/subscriptions/<name>
+
+
+Source = Annotated[Union[HttpSource, PythonSource, PubSubSource], Field(discriminator="type")]
 
 
 # ------------------------------------------------------------------ #
@@ -185,18 +191,28 @@ class Build(BaseModel):
 # ------------------------------------------------------------------ #
 
 class Deploy(BaseModel):
-    schedule: str
+    type: Literal["batch", "streaming"] = "batch"
+    # batch fields
+    schedule: str | None = None
     paused: bool = False
+    # streaming fields
+    window_seconds: int = 60
 
     @model_validator(mode="after")
-    def validate_schedule(self) -> "Deploy":
-        parts = self.schedule.strip().split()
-        if len(parts) != 5 or not all(_CRON_FIELD_RE.match(p) for p in parts):
-            raise ValueError(
-                f"deploy.schedule '{self.schedule}' is not a valid cron expression. "
-                "Expected 5 space-separated fields: minute hour day-of-month month day-of-week "
-                "(e.g. '0 8 * * *' for daily at 8 AM UTC)"
-            )
+    def validate_deploy(self) -> "Deploy":
+        if self.type == "batch":
+            if not self.schedule:
+                raise ValueError(
+                    "deploy.schedule is required for batch deployments "
+                    "(e.g. schedule: \"0 8 * * *\")"
+                )
+            parts = self.schedule.strip().split()
+            if len(parts) != 5 or not all(_CRON_FIELD_RE.match(p) for p in parts):
+                raise ValueError(
+                    f"deploy.schedule '{self.schedule}' is not a valid cron expression. "
+                    "Expected 5 space-separated fields: minute hour day-of-month month day-of-week "
+                    "(e.g. '0 8 * * *' for daily at 8 AM UTC)"
+                )
         return self
 
 
@@ -219,6 +235,20 @@ class Pipeline(BaseModel):
     @classmethod
     def model_fields_set(cls):
         return super().model_fields_set()
+
+    @model_validator(mode="after")
+    def streaming_constraints(self) -> "Pipeline":
+        if isinstance(self.source, PubSubSource):
+            if self.build.strategy != "append":
+                raise ValueError(
+                    "Streaming pipelines (source.type: pubsub) require "
+                    "build.strategy: append — incremental and full_refresh are not supported"
+                )
+            if self.deploy and self.deploy.type != "streaming":
+                raise ValueError(
+                    "Pipelines with source.type: pubsub must use deploy.type: streaming"
+                )
+        return self
 
     # Allow "schema" key in YAML (reserved word in Python)
     @classmethod

@@ -1,6 +1,6 @@
 # pvc Core Limitations Tracker
 
-Last updated: 2026-05-12 | Total findings: 36 | Open: 0 | Fixed: 36
+Last updated: 2026-05-12 | Total findings: 42 | Open: 0 | Fixed: 42
 
 ## Severity Definitions
 
@@ -29,14 +29,18 @@ Last updated: 2026-05-12 | Total findings: 36 | Open: 0 | Fixed: 36
 | ID | Severity | Category | Summary | Scenario |
 |----|----------|----------|---------|----------|
 
-*No open findings.*
-
 ---
 
 ## Fixed Findings
 
 | ID | Summary | Fixed In | Notes |
 |----|---------|----------|-------|
+| F-042 | `pvc undeploy` would call `terraform destroy` (cancel) not drain on a Dataflow job | `infra/modules/gcp/streaming_pipeline/main.tf` — `on_delete = "drain"` on the `google_dataflow_flex_template_job` resource; Terraform handles the drain automatically | |
+| F-041 | No Beam runner code in pvc — no pipeline to read from Pub/Sub, project, and write windowed Parquet to GCS | New `pvc/gcp/beam_runner.py` — `ReadFromPubSub → project_message → FixedWindows → WriteToParquet` Beam pipeline; runs as Dataflow Flex Template entrypoint | |
+| F-040 | No `streaming_pipeline` Terraform module — batch module only provisions `google_cloud_run_v2_job` | New `pvc/infra/modules/gcp/streaming_pipeline/` — `google_dataflow_flex_template_job` with `on_delete = "drain"` | |
+| F-039 | `pvc deploy` could not load or route streaming pipelines | `pvc/cli.py` — `deploy` and `undeploy` commands route by `pipeline.deploy.type`; `deploy-status` and confirm messages are streaming-aware | |
+| F-038 | `Deploy` model required `schedule` (cron); no `type` or `window_seconds` fields | `pvc/config/models.py` — `Deploy.type: Literal["batch","streaming"] = "batch"`, `schedule` optional (required only for batch), `window_seconds: int = 60` added | |
+| F-037 | `source.type: pubsub` not recognized — `Source` union only accepted `http` and `python` | `pvc/config/models.py` — new `PubSubSource` model with `subscription: str`; added to `Source` union; Pipeline validator enforces `strategy: append` for streaming | |
 | F-035 | Generated DAG used `CloudRunJobOperator` which doesn't exist in `apache-airflow-providers-google` for Composer 3 / Airflow 2.11; correct name is `CloudRunExecuteJobOperator` | `gcp/batch_deploy.py` — `_dag_content()` updated to import and use `CloudRunExecuteJobOperator` | |
 | F-033 | `pvc deploy` failed with "No Cloud Composer environments found" when no environment pre-existed | `gcp/batch_deploy.py` — `_find_or_create_composer_env()` auto-provisions `pvc-composer` with `--async` + polls every 30s until RUNNING; `undeploy` uses new `_describe_composer_dag_bucket()` helper | |
 | F-034 | Cloud Run container exited immediately (`JAVA_GATEWAY_EXITED`) because `runner.py` unconditionally started Spark even when `catalog=gcp`; `python:3.12-slim` has no JVM | `engine/runner.py` — GCS path skips Spark init; `spark.stop()` guarded by `if spark is not None` | `0685e72` |
