@@ -54,7 +54,7 @@ def deploy(
     template_gcs_path = f"gs://{warehouse_bucket}/dataflow-templates/{pipeline_name}.json"
     print(f"  Uploading Flex Template spec to {template_gcs_path}...", flush=True)
     _upload_flex_template_spec(image_uri, pipeline_name, template_gcs_path, sa_email,
-                               warehouse_bucket, project_id)
+                               warehouse_bucket, project_id, region)
 
     print("  Applying Terraform (Dataflow streaming job)...", flush=True)
     job_name, job_id = _terraform_apply_streaming(
@@ -137,15 +137,15 @@ def _build_image(
         )
 
         (tmp_path / "Dockerfile").write_text(dedent("""\
-            FROM python:3.12-slim
-            WORKDIR /app
+            FROM gcr.io/dataflow-templates-base/python312-template-launcher-base
+            WORKDIR /template
             COPY pyproject.toml .
             COPY pvc/ ./pvc/
             RUN pip install --no-cache-dir -e . 'apache-beam[gcp]'
             COPY pipelines/ ./pipelines/
             COPY connectors/ ./connectors/
             COPY project.yml .
-            ENTRYPOINT ["python", "-m", "pvc.gcp.beam_runner"]
+            ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/template/pvc/gcp/beam_runner.py"
         """))
 
         result = subprocess.run(
@@ -203,6 +203,7 @@ def _upload_flex_template_spec(
     sa_email: str,
     warehouse_bucket: str,
     project_id: str,
+    region: str,
 ) -> None:
     spec = {
         "image": image_uri,
@@ -236,6 +237,7 @@ def _upload_flex_template_spec(
         "defaultEnvironment": {
             "serviceAccountEmail": sa_email,
             "tempLocation": f"gs://{warehouse_bucket}/dataflow-temp/{pipeline_name}",
+            "workerRegion": region,
         },
     }
 

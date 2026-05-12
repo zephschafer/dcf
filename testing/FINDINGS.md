@@ -1,6 +1,6 @@
 # pvc Core Limitations Tracker
 
-Last updated: 2026-05-12 | Total findings: 42 | Open: 0 | Fixed: 42
+Last updated: 2026-05-12 | Total findings: 46 | Open: 1 | Fixed: 45
 
 ## Severity Definitions
 
@@ -28,6 +28,7 @@ Last updated: 2026-05-12 | Total findings: 42 | Open: 0 | Fixed: 42
 
 | ID | Severity | Category | Summary | Scenario |
 |----|----------|----------|---------|----------|
+| F-046 | Minor | UX | No actionable guidance when `ZONE_RESOURCE_POOL_EXHAUSTED` — raw Terraform error surfaced with no suggestion to retry in another zone | streaming-deployment |
 
 ---
 
@@ -35,6 +36,9 @@ Last updated: 2026-05-12 | Total findings: 42 | Open: 0 | Fixed: 42
 
 | ID | Summary | Fixed In | Notes |
 |----|---------|----------|-------|
+| F-045 | `pvc gcp setup` did not grant `roles/dataflow.worker` — workers failed with cryptic IAM error on job startup | `pvc/infra/modules/gcp/main.tf` — added `google_project_iam_member` resource granting `roles/dataflow.worker` to the SA | |
+| F-044 | Wrong Dockerfile base image for Flex Template — `python:3.12-slim` has no `/opt/google/dataflow/python_template_launcher`; job fails at startup | `gcp/streaming_deploy.py` — changed to `gcr.io/dataflow-templates-base/python312-template-launcher-base` with `ENV FLEX_TEMPLATE_PYTHON_PY_FILE` instead of `ENTRYPOINT` | |
+| F-043 | `google_dataflow_flex_template_job` not in GA Terraform provider — `hashicorp/google` does not support this resource type | `pvc/infra/modules/gcp/streaming_pipeline/main.tf` — switched `required_providers` to `hashicorp/google-beta ~> 5.0`; added `provider = google-beta` on the resource | |
 | F-042 | `pvc undeploy` would call `terraform destroy` (cancel) not drain on a Dataflow job | `infra/modules/gcp/streaming_pipeline/main.tf` — `on_delete = "drain"` on the `google_dataflow_flex_template_job` resource; Terraform handles the drain automatically | |
 | F-041 | No Beam runner code in pvc — no pipeline to read from Pub/Sub, project, and write windowed Parquet to GCS | New `pvc/gcp/beam_runner.py` — `ReadFromPubSub → project_message → FixedWindows → WriteToParquet` Beam pipeline; runs as Dataflow Flex Template entrypoint | |
 | F-040 | No `streaming_pipeline` Terraform module — batch module only provisions `google_cloud_run_v2_job` | New `pvc/infra/modules/gcp/streaming_pipeline/` — `google_dataflow_flex_template_job` with `on_delete = "drain"` | |

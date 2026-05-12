@@ -26,6 +26,12 @@ resource "google_storage_bucket_iam_member" "warehouse_sa" {
   member = "serviceAccount:${var.sa_email}"
 }
 
+resource "google_project_iam_member" "dataflow_worker" {
+  project = var.project_id
+  role    = "roles/dataflow.worker"
+  member  = "serviceAccount:${var.sa_email}"
+}
+
 output "warehouse_bucket" {
   value = google_storage_bucket.warehouse.name
 }

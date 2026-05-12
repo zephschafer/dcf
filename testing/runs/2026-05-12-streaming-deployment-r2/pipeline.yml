@@ -1,0 +1,32 @@
+version: 1
+name: click_events
+description: Clickstream events from the product UI
+
+source:
+  type: pubsub
+  subscription: projects/quipu-data-generator/subscriptions/pvc-test-clicks-sub
+
+schema:
+  columns:
+    - name: event_id
+      path: event_id
+      type: string
+    - name: user_id
+      path: user_id
+      type: integer
+    - name: action
+      path: action
+      type: string
+    - name: page
+      path: page
+      type: string
+    - name: timestamp
+      path: timestamp
+      type: timestamp
+
+build:
+  strategy: append
+
+deploy:
+  type: streaming
+  window_seconds: 60
