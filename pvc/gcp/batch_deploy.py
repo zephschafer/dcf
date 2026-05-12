@@ -41,20 +41,20 @@ def deploy(
     image_uri = _image_uri(project_id, region, pipeline_name)
 
     print(f"  Building container image '{image_uri}'...")
-    print("  (First build may take a few minutes)")
+    print("  (First build may take a few minutes)", flush=True)
     _build_image(project_root, project_id, region, pipeline_name,
                  image_uri, warehouse_bucket)
 
-    print(f"  Creating Cloud Run job '{job_name}'...")
+    print(f"  Creating Cloud Run job '{job_name}'...", flush=True)
     _create_or_update_cloud_run_job(
         job_name, image_uri, project_id, region, sa_email, pipeline_name,
     )
 
-    print("  Locating Cloud Composer environment...")
+    print("  Locating Cloud Composer environment...", flush=True)
     composer_env_name, dag_bucket = _find_composer_env(project_id, region)
-    print(f"  Using Composer environment: {composer_env_name}")
+    print(f"  Using Composer environment: {composer_env_name}", flush=True)
 
-    print(f"  Uploading DAG '{dag_id}' to Composer...")
+    print(f"  Uploading DAG '{dag_id}' to Composer...", flush=True)
     _upload_dag(dag_id, job_name, schedule, paused, project_id, region, dag_bucket)
 
     return {
@@ -153,6 +153,7 @@ def _build_image(
         result = subprocess.run(
             [
                 "gcloud", "builds", "submit",
+                "--project", project_id,
                 "--region", region,
                 "--tag", image_uri,
                 "--timeout", "600s",
@@ -276,9 +277,12 @@ def _find_composer_env(project_id: str, region: str) -> tuple[str, str]:
     if not envs:
         raise RuntimeError(
             f"No Cloud Composer environments found in {project_id}/{region}.\n"
-            "Create one first:\n"
-            "  gcloud composer environments create pvc-composer "
-            f"--location {region} --project {project_id}"
+            "Create one first (takes 15–30 min):\n"
+            f"  gcloud composer environments create pvc-composer \\\n"
+            f"    --location {region} --project {project_id} \\\n"
+            f"    --environment-size=small \\\n"
+            f"    --service-account <your-sa-email>\n"
+            "Then re-run: pvc deploy <pipeline-name>"
         )
 
     env = envs[0]

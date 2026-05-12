@@ -1,6 +1,6 @@
 # pvc Core Limitations Tracker
 
-Last updated: 2026-05-11 | Total findings: 31 | Open: 0 | Fixed: 31
+Last updated: 2026-05-12 | Total findings: 33 | Open: 1 | Fixed: 32
 
 ## Severity Definitions
 
@@ -28,6 +28,7 @@ Last updated: 2026-05-11 | Total findings: 31 | Open: 0 | Fixed: 31
 
 | ID | Severity | Category | Summary | Scenario |
 |----|----------|----------|---------|----------|
+| F-033 | Major | Runtime | `pvc deploy` fails with "No Cloud Composer environments found" when no environment pre-exists — breaking the one-command deploy promise; should auto-provision a Composer environment (with a 20+ min warning) before uploading the DAG | batch-deployment |
 
 ---
 
@@ -62,6 +63,7 @@ Last updated: 2026-05-11 | Total findings: 31 | Open: 0 | Fixed: 31
 | F-025 | `new-pipeline` skill didn't document auth pattern for Python connectors — `PythonSource` has no `auth` field | `new-pipeline.md` — added "auth pattern" section under `type: python` showing how to pass key as static param with `{{ env.VAR }}` and read from `dynamic_params` | |
 | F-030 | `deploy:` block in pipeline YAML silently ignored by `pvc validate` — invalid cron expressions passed without error | `config/models.py` — added `Deploy` model with cron validator; `Pipeline.deploy` optional field; `cli.py` validate now shows clean error on `ValidationError`; also fixed `from_dict` dict-mutation bug | |
 | F-031 | `pvc deploy` and `pvc undeploy` CLI commands did not exist | `cli.py` — added `pvc deploy <name>`, `pvc undeploy <name>`, `pvc deploy-status [<name>]`; `gcp/batch_deploy.py` — orchestration: Cloud Build image, Cloud Run job, Composer DAG upload | |
+| F-032 | `gcloud builds submit` in batch_deploy.py missing `--project` — used active gcloud config project instead of `gcp.project_id` from project.yml, causing 400 HTTPError | `gcp/batch_deploy.py` — added `"--project", project_id` to `gcloud builds submit` subprocess call | |
 | F-026 | `pvc gcp setup` failed on re-run — Terraform 409 when warehouse bucket already exists | `gcp/terraform.py` — `_import_existing_resources()` checks GCS before apply and runs `terraform import` if bucket already exists; idempotent on re-run | |
 | F-027 | `pvc gcp teardown` reported "GCP resources destroyed" even when all steps were skipped | `cli.py` — teardown now tracks which resources were actually destroyed and prints accurate summary or "No GCP resources were found to destroy" | |
 | F-028 | `setup_error` in project.yml contained raw ANSI terminal escape codes | `cli.py` — added `_ANSI_RE` pattern; strips escape codes from error string before writing to project.yml | |
