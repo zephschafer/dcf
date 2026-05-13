@@ -1,6 +1,8 @@
 # pvc
 
-A YAML-driven data ingestion framework for building local Apache Iceberg data lakes. Define pipelines as YAML; pvc handles iteration, schema projection, deduplication, and writing to Iceberg — no boilerplate required.
+A framework for building data lakes from scatch. 
+User: Define pipelines by specifying the basic configs (source, destination, API keys) in YAML (like dbt models)
+PVC: Builds datalake. Builds and deploys pipeline which writes to datalake.
 
 You install it as a dependency in a separate data project repository. See [quipu-data-generator](https://github.com/zephschafer/quipu) for a working example.
 
