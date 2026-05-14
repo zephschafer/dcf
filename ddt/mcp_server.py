@@ -1,8 +1,8 @@
 """
-pvc MCP server.
+ddt MCP server.
 
-Exposes pvc as tools Claude can call directly during a conversation.
-Start with: pvc mcp serve
+Exposes ddt as tools Claude can call directly during a conversation.
+Start with: ddt mcp serve
 
 Tools
 -----
@@ -27,7 +27,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("pvc")
+mcp = FastMCP("ddt")
 
 def _pipelines_dir() -> Path:
     from .project import find_project_root
@@ -196,7 +196,7 @@ def materialize_model(sql: str, namespace: str, table: str) -> dict[str, Any]:
     """
     Run a SQL query and persist the result as a new warehouse table.
 
-    This is the pvc equivalent of `dbt run` for a single model: it executes
+    This is the ddt equivalent of `dbt run` for a single model: it executes
     the SQL, writes the result to warehouse/<namespace>/<table>/data/part-001.parquet,
     and (when catalog=gcp) uploads it to the GCS bucket so it is immediately
     visible in list_warehouse_tables() and queryable via query_warehouse().
@@ -209,7 +209,7 @@ def materialize_model(sql: str, namespace: str, table: str) -> dict[str, Any]:
         )
 
     The sql argument follows the same namespace.table rewriting rules as
-    query_warehouse(): reference tables as namespace.table and pvc resolves them.
+    query_warehouse(): reference tables as namespace.table and ddt resolves them.
     """
     from .warehouse_reader import materialize_model as _materialize
     try:

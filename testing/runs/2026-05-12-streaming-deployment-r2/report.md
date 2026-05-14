@@ -5,28 +5,28 @@ Date: 2026-05-12 | Tester: Claude Sonnet 4.6 | Scenario: streaming-deployment
 
 Phase 1 (validation) and Phase 2 (provisioning) passed after fixing 4 new findings.
 Phase 3 (message ingestion/verification) and Phase 4 (undeploy) were blocked by GCP zone
-capacity exhaustion across all attempted zones — a GCP infrastructure issue, not a pvc bug.
+capacity exhaustion across all attempted zones — a GCP infrastructure issue, not a ddt bug.
 
 ---
 
 ## Success Criteria
 
-- [x] `pvc validate click_events` passes with streaming type annotation
+- [x] `ddt validate click_events` passes with streaming type annotation
 - [x] Cloud Build produces a container image in Artifact Registry
 - [x] Flex Template spec uploaded to GCS
 - [x] Terraform provisions `google_dataflow_flex_template_job` without error
 - [x] Dataflow job reaches `JOB_STATE_RUNNING` (control plane; job ID assigned)
 - [ ] Dataflow workers start and begin consuming Pub/Sub messages
-- [ ] Parquet files appear in `gs://pvc-warehouse-quipu-data-generator/click_events/click_events/data/`
-- [ ] `pvc query "SELECT * FROM click_events.click_events LIMIT 10"` returns 10 rows
-- [ ] Second `pvc deploy click_events` succeeds or handles gracefully
-- [ ] `pvc undeploy click_events --yes` drains and removes the job
+- [ ] Parquet files appear in `gs://ddt-warehouse-quipu-data-generator/click_events/click_events/data/`
+- [ ] `ddt query "SELECT * FROM click_events.click_events LIMIT 10"` returns 10 rows
+- [ ] Second `ddt deploy click_events` succeeds or handles gracefully
+- [ ] `ddt undeploy click_events --yes` drains and removes the job
 
 ---
 
 ## What Worked
 
-- `pvc validate click_events`: correctly showed `(streaming, subscription: ..., 5 columns)` ✓
+- `ddt validate click_events`: correctly showed `(streaming, subscription: ..., 5 columns)` ✓
 - Cloud Build + Artifact Registry: image built successfully with `apache-beam[gcp]` ✓
 - Flex Template spec upload to GCS: clean JSON, correct structure ✓
 - Terraform provisioning: `google_dataflow_flex_template_job` created in both us-central1 and us-east1 ✓
@@ -58,14 +58,14 @@ Original image `python:3.12-slim` has no Dataflow launcher. Fix: changed to
 `gcr.io/dataflow-templates-base/python312-template-launcher-base` with
 `ENV FLEX_TEMPLATE_PYTHON_PY_FILE` instead of `ENTRYPOINT`.
 
-### F-045 — OPEN: `pvc gcp setup` does not grant `roles/dataflow.worker` to the service account
+### F-045 — OPEN: `ddt gcp setup` does not grant `roles/dataflow.worker` to the service account
 Dataflow workers need `roles/dataflow.worker` on the SA. `bootstrap.py` only grants
 storage/bigquery roles. Users get a cryptic IAM error during job startup.
 
 ### F-046 — OPEN (UX/Enhancement): No actionable guidance when zone capacity is exhausted
-When `ZONE_RESOURCE_POOL_EXHAUSTED` occurs, pvc surfaces the raw Terraform error with no
+When `ZONE_RESOURCE_POOL_EXHAUSTED` occurs, ddt surfaces the raw Terraform error with no
 suggestion to retry in a different zone or region. Enhancement: detect this error and suggest
-`pvc deploy --region us-east4` or similar.
+`ddt deploy --region us-east4` or similar.
 
 ---
 
@@ -78,7 +78,7 @@ version: 1
 name: click_events
 source:
   type: pubsub
-  subscription: projects/quipu-data-generator/subscriptions/pvc-test-clicks-sub
+  subscription: projects/quipu-data-generator/subscriptions/ddt-test-clicks-sub
 schema:
   columns:
     - {name: event_id, path: event_id, type: string}

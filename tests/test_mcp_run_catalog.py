@@ -46,12 +46,12 @@ def test_mcp_run_pipeline_passes_gcp_catalog(tmp_path):
     mock_run = MagicMock()
 
     with (
-        patch("pvc.mcp_server._pipelines_dir", return_value=pipelines_dir),
-        patch("pvc.warehouse_reader._project_config", return_value={"catalog": "gcp"}),
-        patch("pvc.mcp_server.redirect_stdout"),
-        patch("pvc.engine.runner.run_pipeline", mock_run),
+        patch("ddt.mcp_server._pipelines_dir", return_value=pipelines_dir),
+        patch("ddt.warehouse_reader._project_config", return_value={"catalog": "gcp"}),
+        patch("ddt.mcp_server.redirect_stdout"),
+        patch("ddt.engine.runner.run_pipeline", mock_run),
     ):
-        import pvc.mcp_server as mcp
+        import ddt.mcp_server as mcp
         mcp.run_pipeline("test_pipe", limit=1)
 
     assert mock_run.called
@@ -70,12 +70,12 @@ def test_mcp_run_pipeline_defaults_to_local_catalog(tmp_path):
     mock_run = MagicMock()
 
     with (
-        patch("pvc.mcp_server._pipelines_dir", return_value=pipelines_dir),
-        patch("pvc.warehouse_reader._project_config", return_value={}),
-        patch("pvc.mcp_server.redirect_stdout"),
-        patch("pvc.engine.runner.run_pipeline", mock_run),
+        patch("ddt.mcp_server._pipelines_dir", return_value=pipelines_dir),
+        patch("ddt.warehouse_reader._project_config", return_value={}),
+        patch("ddt.mcp_server.redirect_stdout"),
+        patch("ddt.engine.runner.run_pipeline", mock_run),
     ):
-        import pvc.mcp_server as mcp
+        import ddt.mcp_server as mcp
         mcp.run_pipeline("test_pipe")
 
     assert mock_run.called

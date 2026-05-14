@@ -1,8 +1,8 @@
-"""Tests for pvc.engine.transforms — including the new array_join transform."""
+"""Tests for ddt.engine.transforms — including the new array_join transform."""
 import pytest
 
-from pvc.config.models import ArrayJoinTransform
-from pvc.engine.transforms import apply_transform
+from ddt.config.models import ArrayJoinTransform
+from ddt.engine.transforms import apply_transform
 
 
 class TestArrayJoin:

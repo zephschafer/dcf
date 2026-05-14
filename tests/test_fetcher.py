@@ -1,11 +1,11 @@
-"""Tests for pvc.engine.fetcher — focused on _parse_response behaviour."""
+"""Tests for ddt.engine.fetcher — focused on _parse_response behaviour."""
 import json
 from unittest.mock import MagicMock
 
 import pytest
 
-from pvc.config.models import HttpSource, Response
-from pvc.engine.fetcher import _parse_response
+from ddt.config.models import HttpSource, Response
+from ddt.engine.fetcher import _parse_response
 
 
 def _make_response(body) -> MagicMock:

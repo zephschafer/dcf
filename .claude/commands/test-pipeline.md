@@ -1,8 +1,8 @@
-You are running the pvc testing process for a specific scenario. Your job is to act as a first-time pvc user attempting to build a real pipeline, while also acting as a disciplined QA engineer who records every failure, friction point, and gap precisely.
+You are running the ddt testing process for a specific scenario. Your job is to act as a first-time ddt user attempting to build a real pipeline, while also acting as a disciplined QA engineer who records every failure, friction point, and gap precisely.
 
 ## What You Are Testing
 
-pvc is a YAML-driven data ingestion framework and Claude plugin (CLI + skills + MCP server). The core promise is that a user can say "build me a pipeline for X" and Claude can successfully orchestrate a working pipeline end-to-end. You are testing whether that promise is true for the given scenario.
+ddt is a YAML-driven data ingestion framework and Claude plugin (CLI + skills + MCP server). The core promise is that a user can say "build me a pipeline for X" and Claude can successfully orchestrate a working pipeline end-to-end. You are testing whether that promise is true for the given scenario.
 
 ## Arguments
 
@@ -16,7 +16,7 @@ Before reading the scenario, create an isolated project directory for this run. 
 
 **a. Check for test_config.yml**
 
-Look for `testing/test_config.yml` in the pvc repository. If it does not exist, stop and tell the user:
+Look for `testing/test_config.yml` in the ddt repository. If it does not exist, stop and tell the user:
 
 > `testing/test_config.yml` is missing. Copy `testing/test_config.yml.example` to `testing/test_config.yml` and fill in the credentials needed for this scenario. The file is gitignored and will not be committed.
 
@@ -54,12 +54,12 @@ cp testing/test_config.yml \
 
 **e. Record the clone path**
 
-Set `CLONE` to the absolute path of the cloned quipu (e.g. `/Users/zephschafer/Documents/GitHub/pvc/testing/runs/2026-05-10-github-repos/quipu`). All subsequent pvc commands target this path via the `PVC_PROJECT_DIR` environment variable.
+Set `CLONE` to the absolute path of the cloned quipu (e.g. `/Users/zephschafer/Documents/GitHub/ddt/testing/runs/2026-05-10-github-repos/quipu`). All subsequent ddt commands target this path via the `DDT_PROJECT_DIR` environment variable.
 
 Shorthand for all CLI commands from this point forward:
 
 ```bash
-PVC_PROJECT_DIR=$CLONE uv --directory /Users/zephschafer/Documents/GitHub/pvc run pvc <command>
+DDT_PROJECT_DIR=$CLONE uv --directory /Users/zephschafer/Documents/GitHub/ddt run ddt <command>
 ```
 
 ---
@@ -73,7 +73,7 @@ Read the scenario file at `testing/scenarios/<scenario-name>.md`. This defines:
 - Credentials required
 
 Also read:
-- `README.md` — the full pvc YAML schema reference
+- `README.md` — the full ddt YAML schema reference
 - `.claude/commands/new-pipeline.md` — the existing skill you will simulate using
 - `testing/FINDINGS.md` — existing findings (so you don't re-report known issues)
 - Any prior runs for this scenario in `testing/runs/` (to build on prior work)
@@ -87,7 +87,7 @@ Before writing any pipeline, investigate the target API as a real user would:
 - Fetch the API documentation (web search or provided URL)
 - Make real HTTP requests to representative endpoints to see actual response shapes
 - Record: response structure, pagination mechanism, auth mechanism, array/nested fields, date field formats, rate limits
-- Note anything that seems hard to express in pvc's current YAML schema
+- Note anything that seems hard to express in ddt's current YAML schema
 
 Do NOT skip this step. Understanding the real API response is essential to accurate testing.
 
@@ -95,7 +95,7 @@ Do NOT skip this step. Understanding the real API response is essential to accur
 
 ## Step 3: Attempt Pipeline Creation (Simulating the new-pipeline Skill)
 
-Proceed through the `new-pipeline` skill steps as if you are a first-time user who just installed pvc:
+Proceed through the `new-pipeline` skill steps as if you are a first-time user who just installed ddt:
 
 1. Choose source type: `http` or `python`
 2. Design the pipeline YAML (iterate axes, auth, params, schema, build strategy)
@@ -111,10 +111,10 @@ Proceed through the `new-pipeline` skill steps as if you are a first-time user w
 **Validate using the CLI:**
 
 ```bash
-PVC_PROJECT_DIR=$CLONE uv --directory /Users/zephschafer/Documents/GitHub/pvc run pvc validate <name>
+DDT_PROJECT_DIR=$CLONE uv --directory /Users/zephschafer/Documents/GitHub/ddt run ddt validate <name>
 ```
 
-**Critical constraint:** Do NOT work around YAML schema limitations by writing custom Python. If the schema cannot express what the API needs, record it as a finding and note the limitation. The test is whether pvc's YAML is expressive enough — not whether Python can compensate.
+**Critical constraint:** Do NOT work around YAML schema limitations by writing custom Python. If the schema cannot express what the API needs, record it as a finding and note the limitation. The test is whether ddt's YAML is expressive enough — not whether Python can compensate.
 
 ---
 
@@ -125,12 +125,12 @@ Run and iterate until either success or a blocking finding.
 **Run with limit:**
 
 ```bash
-PVC_PROJECT_DIR=$CLONE uv --directory /Users/zephschafer/Documents/GitHub/pvc run pvc run <name> --limit 1
+DDT_PROJECT_DIR=$CLONE uv --directory /Users/zephschafer/Documents/GitHub/ddt run ddt run <name> --limit 1
 ```
 
 If it fails: diagnose the error. Distinguish between:
 - **User error** (wrong path, wrong param name) → fix and retry
-- **pvc bug or schema gap** → record finding, attempt workaround if possible, continue
+- **ddt bug or schema gap** → record finding, attempt workaround if possible, continue
 
 **When `--limit 1` succeeds:**
 
@@ -138,14 +138,14 @@ If it fails: diagnose the error. Distinguish between:
 - Run full pipeline (or a reasonable subset via `--limit`):
 
 ```bash
-PVC_PROJECT_DIR=$CLONE uv --directory /Users/zephschafer/Documents/GitHub/pvc run pvc run <name>
+DDT_PROJECT_DIR=$CLONE uv --directory /Users/zephschafer/Documents/GitHub/ddt run ddt run <name>
 ```
 
 **Query the clone's warehouse** to verify row counts and spot-check data quality. The warehouse lives at `$CLONE/warehouse/`. Query it directly:
 
 ```bash
-PVC_PROJECT_DIR=$CLONE uv --directory /Users/zephschafer/Documents/GitHub/pvc run python -c \
-  "from pvc.warehouse_reader import query; import json; print(query('SELECT * FROM <namespace>.<table> LIMIT 10'))"
+DDT_PROJECT_DIR=$CLONE uv --directory /Users/zephschafer/Documents/GitHub/ddt run python -c \
+  "from ddt.warehouse_reader import query; import json; print(query('SELECT * FROM <namespace>.<table> LIMIT 10'))"
 ```
 
 Or read the Parquet files directly with DuckDB if simpler.
@@ -236,13 +236,13 @@ Wait for the user to review and tell you which findings to fix, mark by-design, 
 
 **Never classify a finding as Minor if it prevents a real-world pipeline from working.** When in doubt, classify higher (more severe).
 
-**A finding is Blocking if:** any real API of this type cannot be ingested without a pvc code change.
+**A finding is Blocking if:** any real API of this type cannot be ingested without a ddt code change.
 
 **A finding is a Skill finding if:** the `new-pipeline` skill gave you wrong or missing guidance that caused you to go down the wrong path.
 
 **A finding is a UX finding if:** an error message was cryptic, a CLI flag was confusing, or you had to read source code to understand what was happening.
 
-**Do not report findings for things that are intentionally out of scope** (e.g., pvc does not claim to support OAuth PKCE flows). Check the README and existing "By Design" entries before filing.
+**Do not report findings for things that are intentionally out of scope** (e.g., ddt does not claim to support OAuth PKCE flows). Check the README and existing "By Design" entries before filing.
 
 ---
 
@@ -250,7 +250,7 @@ Wait for the user to review and tell you which findings to fix, mark by-design, 
 
 When the user tells you to fix a finding:
 
-1. Implement the fix in the relevant pvc source file
+1. Implement the fix in the relevant ddt source file
 2. Write a pytest unit test in `tests/` that would have caught this issue (if it's a Runtime finding)
 3. Re-run the scenario's `--limit 1` test to verify the fix
 4. Update `testing/FINDINGS.md`: move the finding to the Fixed table with the git commit hash

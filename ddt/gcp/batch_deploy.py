@@ -17,11 +17,11 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-_PVC_PKG_DIR = Path(__file__).parent.parent          # pvc/ package
-_PVC_REPO_ROOT = _PVC_PKG_DIR.parent                 # repo root (contains pyproject.toml)
-_BATCH_MODULE_DIR = _PVC_PKG_DIR / "infra" / "modules" / "gcp" / "batch_pipeline"
-_PIPELINE_TF_DIR = Path.home() / ".pvc" / "terraform" / "pipelines"
-_TF_PLUGIN_CACHE = Path.home() / ".pvc" / "terraform" / ".plugin-cache"
+_DDT_PKG_DIR = Path(__file__).parent.parent          # ddt/ package
+_DDT_REPO_ROOT = _DDT_PKG_DIR.parent                 # repo root (contains pyproject.toml)
+_BATCH_MODULE_DIR = _DDT_PKG_DIR / "infra" / "modules" / "gcp" / "batch_pipeline"
+_PIPELINE_TF_DIR = Path.home() / ".ddt" / "terraform" / "pipelines"
+_TF_PLUGIN_CACHE = Path.home() / ".ddt" / "terraform" / ".plugin-cache"
 
 
 # ------------------------------------------------------------------ #
@@ -104,7 +104,7 @@ def undeploy(pipeline_name: str, deployment: dict, gcp_config: dict) -> None:
 # ------------------------------------------------------------------ #
 
 def _image_uri(project_id: str, region: str, pipeline_name: str) -> str:
-    return f"{region}-docker.pkg.dev/{project_id}/pvc-runner/{pipeline_name}:latest"
+    return f"{region}-docker.pkg.dev/{project_id}/ddt-runner/{pipeline_name}:latest"
 
 
 def _build_image(
@@ -118,11 +118,11 @@ def _build_image(
     """Build a Docker image using Cloud Build and push to Artifact Registry."""
     _ensure_artifact_registry_repo(project_id, region)
 
-    with tempfile.TemporaryDirectory(prefix="pvc-build-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="ddt-build-") as tmp:
         tmp_path = Path(tmp)
 
-        shutil.copytree(_PVC_PKG_DIR, tmp_path / "pvc")
-        shutil.copy2(_PVC_REPO_ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
+        shutil.copytree(_DDT_PKG_DIR, tmp_path / "ddt")
+        shutil.copy2(_DDT_REPO_ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
 
         for subdir in ("pipelines", "connectors"):
             src = project_root / subdir
@@ -147,13 +147,13 @@ def _build_image(
             FROM python:3.12-slim
             WORKDIR /app
             COPY pyproject.toml .
-            COPY pvc/ ./pvc/
+            COPY ddt/ ./ddt/
             RUN pip install --no-cache-dir -e .
             COPY pipelines/ ./pipelines/
             COPY connectors/ ./connectors/
             COPY project.yml .
             ENV PIPELINE_NAME=""
-            CMD ["sh", "-c", "pvc run $PIPELINE_NAME"]
+            CMD ["sh", "-c", "ddt run $PIPELINE_NAME"]
         """))
 
         result = subprocess.run(
@@ -177,7 +177,7 @@ def _build_image(
 def _ensure_artifact_registry_repo(project_id: str, region: str) -> None:
     check = subprocess.run(
         [
-            "gcloud", "artifacts", "repositories", "describe", "pvc-runner",
+            "gcloud", "artifacts", "repositories", "describe", "ddt-runner",
             "--location", region, "--project", project_id,
         ],
         capture_output=True,
@@ -185,7 +185,7 @@ def _ensure_artifact_registry_repo(project_id: str, region: str) -> None:
     if check.returncode != 0:
         result = subprocess.run(
             [
-                "gcloud", "artifacts", "repositories", "create", "pvc-runner",
+                "gcloud", "artifacts", "repositories", "create", "ddt-runner",
                 "--repository-format=docker",
                 "--location", region,
                 "--project", project_id,
@@ -205,7 +205,7 @@ def _ensure_artifact_registry_repo(project_id: str, region: str) -> None:
 # ------------------------------------------------------------------ #
 
 def _expected_job_name(pipeline_name: str) -> str:
-    return f"pvc-job-{pipeline_name.replace('_', '-')}"
+    return f"ddt-job-{pipeline_name.replace('_', '-')}"
 
 
 def _tf_work_dir(pipeline_name: str) -> Path:
@@ -280,7 +280,7 @@ def _terraform_destroy_pipeline(
             f"at {work_dir}.\n"
             "If you deployed from a different machine, delete the Cloud Run job and "
             "DAG file manually:\n"
-            f"  gcloud run jobs delete pvc-job-{pipeline_name.replace('_', '-')} "
+            f"  gcloud run jobs delete ddt-job-{pipeline_name.replace('_', '-')} "
             f"--region {region} --project {project_id} --quiet"
         )
 
@@ -352,7 +352,7 @@ def _find_or_create_composer_env(
 ) -> tuple[str, str]:
     """Return (env_name, dag_gcs_prefix) for a RUNNING Composer environment.
 
-    If none exists, creates 'pvc-composer' and polls until RUNNING.
+    If none exists, creates 'ddt-composer' and polls until RUNNING.
     """
     import time
 
@@ -378,7 +378,7 @@ def _find_or_create_composer_env(
         dag_bucket = env["config"]["dagGcsPrefix"]
         return env_name, dag_bucket
 
-    env_name = "pvc-composer"
+    env_name = "ddt-composer"
     print(
         f"\n  No Cloud Composer environment found in {project_id}/{region}.\n"
         f"  Provisioning '{env_name}' (this takes 20–30 minutes)...",
@@ -452,7 +452,7 @@ def _dag_content(dag_id: str, job_name: str, schedule: str, paused: bool,
                   project_id: str, region: str) -> str:
     paused_str = "True" if paused else "False"
     return dedent(f"""\
-        # Generated by pvc — do not edit manually
+        # Generated by ddt — do not edit manually
         from datetime import datetime
         from airflow import DAG
         from airflow.providers.google.cloud.operators.cloud_run import CloudRunExecuteJobOperator
@@ -463,7 +463,7 @@ def _dag_content(dag_id: str, job_name: str, schedule: str, paused: bool,
             start_date=datetime(2024, 1, 1),
             catchup=False,
             is_paused_upon_creation={paused_str},
-            tags=["pvc"],
+            tags=["ddt"],
         ) as dag:
             run_job = CloudRunExecuteJobOperator(
                 task_id="run_{dag_id}",

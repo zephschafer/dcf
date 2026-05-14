@@ -10,13 +10,13 @@ from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
 
-_SA_ACCOUNT_ID = "pvc-lake"
-_SECRET_ID     = "pvc-lake-sa-key"
+_SA_ACCOUNT_ID = "ddt-lake"
+_SECRET_ID     = "ddt-lake-sa-key"
 
 
 def create_state_bucket(project_id: str, region: str, credentials: Credentials) -> str:
     """Create the GCS bucket used for Terraform state. Returns bucket name."""
-    bucket_name = f"pvc-tf-state-{project_id}"
+    bucket_name = f"ddt-tf-state-{project_id}"
     client = storage.Client(project=project_id, credentials=credentials)
     try:
         bucket = client.create_bucket(bucket_name, location=region)
@@ -37,7 +37,7 @@ def create_state_bucket(project_id: str, region: str, credentials: Credentials) 
 
 
 def create_service_account(project_id: str, credentials: Credentials) -> str:
-    """Create the pvc-lake service account. Returns SA email."""
+    """Create the ddt-lake service account. Returns SA email."""
     sa_email = f"{_SA_ACCOUNT_ID}@{project_id}.iam.gserviceaccount.com"
     service  = discovery.build("iam", "v1", credentials=credentials, cache_discovery=False)
     try:
@@ -45,7 +45,7 @@ def create_service_account(project_id: str, credentials: Credentials) -> str:
             name=f"projects/{project_id}",
             body={
                 "accountId": _SA_ACCOUNT_ID,
-                "serviceAccount": {"displayName": "pvc Lake Service Account"},
+                "serviceAccount": {"displayName": "ddt Lake Service Account"},
             },
         ).execute()
         logger.info("Created service account %s", sa_email)
@@ -71,7 +71,7 @@ def create_service_account_key(project_id: str, sa_email: str, credentials: Cred
 
 def store_key_in_secret_manager(project_id: str, key_data: dict, credentials: Credentials) -> str:
     """
-    Store the SA key in Secret Manager as 'pvc-lake-sa-key'.
+    Store the SA key in Secret Manager as 'ddt-lake-sa-key'.
     Creates the secret if it doesn't exist, then adds a new version.
     Returns the full secret resource name.
     """
@@ -108,7 +108,7 @@ def delete_secret(secret_name: str, credentials: Credentials) -> None:
 
 
 def delete_service_account(project_id: str, sa_email: str, credentials: Credentials) -> None:
-    """Delete the pvc-lake service account."""
+    """Delete the ddt-lake service account."""
     service = discovery.build("iam", "v1", credentials=credentials, cache_discovery=False)
     try:
         service.projects().serviceAccounts().delete(

@@ -3,10 +3,10 @@
 ## Goal
 
 Test the full streaming deployment lifecycle: a pipeline YAML with a Pub/Sub source
-and `deploy: type: streaming` block is validated, deployed to GCP via `pvc deploy`,
+and `deploy: type: streaming` block is validated, deployed to GCP via `ddt deploy`,
 and a long-running Apache Beam job on Dataflow subscribes to the Pub/Sub topic,
 projects each message through the pipeline schema, and writes windowed Parquet files
-to the GCS warehouse. Then verify that re-deploying is idempotent and `pvc undeploy`
+to the GCS warehouse. Then verify that re-deploying is idempotent and `ddt undeploy`
 drains the Dataflow job without touching warehouse data.
 
 **This scenario tests new feature code.** The `deploy: type: streaming`,
@@ -15,17 +15,17 @@ the first run will surface Blocking findings that drive development of the
 `streaming-deployment` feature.
 
 **The core questions this scenario answers:**
-1. Does `pvc validate` accept a `source: type: pubsub` and `deploy: type: streaming`
+1. Does `ddt validate` accept a `source: type: pubsub` and `deploy: type: streaming`
    block in the pipeline YAML?
-2. Does `pvc deploy` provision a Dataflow streaming job (not a batch job) from the
+2. Does `ddt deploy` provision a Dataflow streaming job (not a batch job) from the
    pipeline YAML?
 3. Do messages published to Pub/Sub appear as Parquet files in the GCS warehouse?
 4. Is re-deploying idempotent — no duplicate Dataflow jobs?
-5. Does `pvc undeploy` drain the Dataflow job cleanly without touching warehouse data?
+5. Does `ddt undeploy` drain the Dataflow job cleanly without touching warehouse data?
 
 ## Target Component
 
-This scenario tests pvc's own CLI, GCP provisioning layer, and the new Beam runner —
+This scenario tests ddt's own CLI, GCP provisioning layer, and the new Beam runner —
 not an external third-party API. The pipeline used as the test vehicle is
 `click_events`: a flat JSON event with five fields, no nesting, no iterate axes,
 keeping schema complexity minimal so failures isolate to the streaming infrastructure.
@@ -34,14 +34,14 @@ keeping schema complexity minimal so failures isolate to the streaming infrastru
 
 **GCP Pub/Sub** — the streaming data source.
 
-Test topic: `pvc-test-clicks`
-Test subscription: `pvc-test-clicks-sub`
+Test topic: `ddt-test-clicks`
+Test subscription: `ddt-test-clicks-sub`
 
 Provision before Phase 2:
 ```bash
-gcloud pubsub topics create pvc-test-clicks --project <project_id>
-gcloud pubsub subscriptions create pvc-test-clicks-sub \
-  --topic pvc-test-clicks --project <project_id>
+gcloud pubsub topics create ddt-test-clicks --project <project_id>
+gcloud pubsub subscriptions create ddt-test-clicks-sub \
+  --topic ddt-test-clicks --project <project_id>
 ```
 
 Message format (JSON, one per Pub/Sub message):
@@ -57,7 +57,7 @@ Message format (JSON, one per Pub/Sub message):
 
 Publish test messages via:
 ```bash
-gcloud pubsub topics publish pvc-test-clicks \
+gcloud pubsub topics publish ddt-test-clicks \
   --message '{"event_id":"evt-001","user_id":42,"action":"click","page":"/pricing","timestamp":"2026-05-12T10:00:00Z"}' \
   --project <project_id>
 ```
@@ -74,7 +74,7 @@ gcloud pubsub topics publish pvc-test-clicks \
 
    source:
      type: pubsub
-     subscription: projects/<project_id>/subscriptions/pvc-test-clicks-sub
+     subscription: projects/<project_id>/subscriptions/ddt-test-clicks-sub
 
    schema:
      columns:
@@ -101,32 +101,32 @@ gcloud pubsub topics publish pvc-test-clicks \
      type: streaming
      window_seconds: 60
    ```
-2. Run `pvc validate click_events` — does it accept `source.type: pubsub` and
+2. Run `ddt validate click_events` — does it accept `source.type: pubsub` and
    `deploy.type: streaming` without error?
 3. Verify the schema is checked: remove a required field (e.g. `type:` from a column)
    and confirm validate rejects it, then restore.
-4. Run `pvc validate github_repos` (an existing batch pipeline) — confirm no regression.
+4. Run `ddt validate github_repos` (an existing batch pipeline) — confirm no regression.
 
-Phase 1 success: `pvc validate click_events` passes and rejects malformed YAML with a
+Phase 1 success: `ddt validate click_events` passes and rejects malformed YAML with a
 clear error. Batch pipeline validation is unaffected.
 
-### Phase 2 — Prerequisites and `pvc deploy` provisions Dataflow via Terraform
+### Phase 2 — Prerequisites and `ddt deploy` provisions Dataflow via Terraform
 
 1. Verify prerequisites:
    - `gcloud auth list` — authenticated
    - `catalog: gcp` in `project.yml`
-   - `pvc gcp setup` completed (warehouse bucket exists)
+   - `ddt gcp setup` completed (warehouse bucket exists)
    - Pub/Sub API enabled: `gcloud services list --enabled | grep pubsub`
    - Dataflow API enabled: `gcloud services list --enabled | grep dataflow`
    - Artifact Registry API enabled: `gcloud services list --enabled | grep artifactregistry`
    - Cloud Build API enabled: `gcloud services list --enabled | grep cloudbuild`
    - Create the test topic and subscription (if not already present):
      ```bash
-     gcloud pubsub topics create pvc-test-clicks --project <project_id>
-     gcloud pubsub subscriptions create pvc-test-clicks-sub \
-       --topic pvc-test-clicks --project <project_id>
+     gcloud pubsub topics create ddt-test-clicks --project <project_id>
+     gcloud pubsub subscriptions create ddt-test-clicks-sub \
+       --topic ddt-test-clicks --project <project_id>
      ```
-2. Run `pvc deploy click_events` — record the full output.
+2. Run `ddt deploy click_events` — record the full output.
 3. Check what was provisioned:
    - Dataflow job: `gcloud dataflow jobs list --region us-central1 --project <project_id>`
    - Confirm the job state is `JOB_STATE_RUNNING` (streaming jobs run continuously)
@@ -135,18 +135,18 @@ clear error. Batch pipeline validation is unaffected.
 5. **Verify Terraform state** — confirm resources were provisioned via the
    `streaming_pipeline` Terraform module:
    ```bash
-   ls ~/.pvc/terraform/pipelines/click_events/
+   ls ~/.ddt/terraform/pipelines/click_events/
    # Expected: main.tf  outputs.tf  terraform.tfstate  terraform.tfvars.json  variables.tf
-   terraform -chdir=~/.pvc/terraform/pipelines/click_events show
+   terraform -chdir=~/.ddt/terraform/pipelines/click_events show
    # Expected output contains:
    #   google_dataflow_flex_template_job.pipeline
    ```
-6. Confirm `pvc deploy` on a pipeline without `deploy:` block exits with a clear error.
-7. Confirm `pvc deploy` without `catalog: gcp` exits with a clear error.
+6. Confirm `ddt deploy` on a pipeline without `deploy:` block exits with a clear error.
+7. Confirm `ddt deploy` without `catalog: gcp` exits with a clear error.
 
-Phase 2 success: `pvc deploy click_events` completes, a Dataflow job is running,
+Phase 2 success: `ddt deploy click_events` completes, a Dataflow job is running,
 `project.yml` records the deployment state, and Terraform state at
-`~/.pvc/terraform/pipelines/click_events/` contains the Dataflow job resource.
+`~/.ddt/terraform/pipelines/click_events/` contains the Dataflow job resource.
 
 ### Phase 3 — Message ingestion and data verification
 
@@ -155,7 +155,7 @@ Phase 2 success: `pvc deploy click_events` completes, a Dataflow job is running,
 2. Publish 10 test messages across a range of user IDs and actions:
    ```bash
    for i in $(seq 1 10); do
-     gcloud pubsub topics publish pvc-test-clicks \
+     gcloud pubsub topics publish ddt-test-clicks \
        --message "{\"event_id\":\"evt-$(printf '%03d' $i)\",\"user_id\":$((i % 5 + 1)),\"action\":\"click\",\"page\":\"/page-$i\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
        --project <project_id>
    done
@@ -168,8 +168,8 @@ Phase 2 success: `pvc deploy click_events` completes, a Dataflow job is running,
    ```
 5. Query the warehouse:
    ```bash
-   PVC_PROJECT_DIR=$CLONE uv --directory /path/to/pvc run python -c \
-     "from pvc.warehouse_reader import query; print(query('SELECT COUNT(*), MIN(event_id), MAX(event_id) FROM click_events.click_events'))"
+   DDT_PROJECT_DIR=$CLONE uv --directory /path/to/ddt run python -c \
+     "from ddt.warehouse_reader import query; print(query('SELECT COUNT(*), MIN(event_id), MAX(event_id) FROM click_events.click_events'))"
    ```
 6. Verify all 10 messages are present and the `timestamp` field is correctly typed.
 
@@ -177,27 +177,27 @@ Phase 3 success: at least 10 rows appear in the warehouse within 2 minutes of pu
 
 ### Phase 4 — Idempotency and teardown
 
-1. Run `pvc deploy click_events` a second time — same pipeline YAML, no changes.
+1. Run `ddt deploy click_events` a second time — same pipeline YAML, no changes.
 2. Confirm no second Dataflow job was created — there should be exactly one
    `JOB_STATE_RUNNING` job:
    ```bash
    gcloud dataflow jobs list --region us-central1 --project <project_id> \
-     --filter="name:pvc-job-click-events AND state=JOB_STATE_RUNNING"
+     --filter="name:ddt-job-click-events AND state=JOB_STATE_RUNNING"
    ```
    (Count must be 1.)
 3. Confirm the Terraform state directory still exists and shows exactly one managed
-   resource: `terraform -chdir=~/.pvc/terraform/pipelines/click_events show`
-4. Run `pvc undeploy click_events`.
+   resource: `terraform -chdir=~/.ddt/terraform/pipelines/click_events show`
+4. Run `ddt undeploy click_events`.
 5. Confirm the Dataflow job was **drained** (not cancelled) — check job history:
    ```bash
    gcloud dataflow jobs list --region us-central1 --project <project_id> \
-     --filter="name:pvc-job-click-events"
+     --filter="name:ddt-job-click-events"
    # Expected state: JOB_STATE_DRAINED (not JOB_STATE_CANCELLED)
    ```
    Drain flushes in-flight messages to GCS before stopping; cancel discards them.
-6. **Verify Terraform state directory was removed** by `pvc undeploy`:
+6. **Verify Terraform state directory was removed** by `ddt undeploy`:
    ```bash
-   ls ~/.pvc/terraform/pipelines/click_events/
+   ls ~/.ddt/terraform/pipelines/click_events/
    # Expected: No such file or directory
    ```
 7. Confirm warehouse data is NOT deleted — GCS Parquet files remain:
@@ -207,8 +207,8 @@ Phase 3 success: at least 10 rows appear in the warehouse within 2 minutes of pu
 8. Confirm `deployments.click_events` is removed from `project.yml`.
 9. Clean up the test Pub/Sub resources:
    ```bash
-   gcloud pubsub subscriptions delete pvc-test-clicks-sub --project <project_id>
-   gcloud pubsub topics delete pvc-test-clicks --project <project_id>
+   gcloud pubsub subscriptions delete ddt-test-clicks-sub --project <project_id>
+   gcloud pubsub topics delete ddt-test-clicks --project <project_id>
    ```
 
 Phase 4 success: second deploy is idempotent (Terraform applies a diff, not a
@@ -217,23 +217,23 @@ touching warehouse data.
 
 ## Success Criteria
 
-- [ ] Phase 1: `pvc validate click_events` accepts `source.type: pubsub` and `deploy.type: streaming`
-- [ ] Phase 1: `pvc validate` rejects malformed YAML with a clear error message
-- [ ] Phase 1: `pvc validate` on an existing batch pipeline is unaffected (no regression)
-- [ ] Phase 2: `pvc deploy click_events` completes without error
+- [ ] Phase 1: `ddt validate click_events` accepts `source.type: pubsub` and `deploy.type: streaming`
+- [ ] Phase 1: `ddt validate` rejects malformed YAML with a clear error message
+- [ ] Phase 1: `ddt validate` on an existing batch pipeline is unaffected (no regression)
+- [ ] Phase 2: `ddt deploy click_events` completes without error
 - [ ] Phase 2: Dataflow job state is `JOB_STATE_RUNNING` after deploy
 - [ ] Phase 2: `project.yml` records `deployments.click_events` with type, subscription, dataflow_job_id
-- [ ] Phase 2: `pvc deploy` on a pipeline with no `deploy:` block exits with a clear error
-- [ ] Phase 2: `pvc deploy` without `catalog: gcp` exits with a clear error
-- [ ] Phase 2: Terraform state exists at `~/.pvc/terraform/pipelines/click_events/terraform.tfstate`
+- [ ] Phase 2: `ddt deploy` on a pipeline with no `deploy:` block exits with a clear error
+- [ ] Phase 2: `ddt deploy` without `catalog: gcp` exits with a clear error
+- [ ] Phase 2: Terraform state exists at `~/.ddt/terraform/pipelines/click_events/terraform.tfstate`
 - [ ] Phase 2: `terraform show` lists `google_dataflow_flex_template_job.pipeline`
 - [ ] Phase 3: All 10 published messages appear in the warehouse within 2 minutes
 - [ ] Phase 3: Parquet files appear in `gs://<warehouse-bucket>/click_events/click_events/data/`
 - [ ] Phase 3: `timestamp` column is correctly typed (not stored as string)
-- [ ] Phase 4: Second `pvc deploy` produces exactly one running Dataflow job (idempotent)
-- [ ] Phase 4: `pvc undeploy click_events` drains the job (state: `JOB_STATE_DRAINED`)
-- [ ] Phase 4: Terraform state directory is removed after `pvc undeploy`
-- [ ] Phase 4: GCS data files are untouched after `pvc undeploy`
+- [ ] Phase 4: Second `ddt deploy` produces exactly one running Dataflow job (idempotent)
+- [ ] Phase 4: `ddt undeploy click_events` drains the job (state: `JOB_STATE_DRAINED`)
+- [ ] Phase 4: Terraform state directory is removed after `ddt undeploy`
+- [ ] Phase 4: GCS data files are untouched after `ddt undeploy`
 
 ## Known Complexity
 
@@ -245,7 +245,7 @@ touching warehouse data.
 - **Beam Python SDK in the container:** The container image must include `apache-beam[gcp]`
   which is ~300 MB. Cloud Build will download it on every image build unless layer caching
   is configured. First deploy will be slow (5–10 minutes).
-- **Dataflow job startup time:** After `pvc deploy` completes, the Dataflow job takes
+- **Dataflow job startup time:** After `ddt deploy` completes, the Dataflow job takes
   2–4 minutes to reach `JOB_STATE_RUNNING`. The deploy command should poll and print
   progress, similar to how `_find_or_create_composer_env()` polls in the batch path.
 - **Windowing:** Beam's fixed-time windows determine how often messages are flushed to GCS.
@@ -257,15 +257,15 @@ touching warehouse data.
   files may differ from publish order.
 - **Drain vs cancel:** Streaming Dataflow jobs must be drained (not cancelled) for clean
   shutdown — drain flushes buffered messages in the in-flight window to GCS first.
-  Drain takes 1–5 minutes. `pvc undeploy` must call drain and poll until the job reaches
+  Drain takes 1–5 minutes. `ddt undeploy` must call drain and poll until the job reaches
   `JOB_STATE_DRAINED` before removing Terraform state.
-- **Schema projection in streaming:** pvc's current `projector.py` is designed to operate
+- **Schema projection in streaming:** ddt's current `projector.py` is designed to operate
   on a list of dicts from an HTTP response batch. In streaming, it must operate on
   individual Pub/Sub messages decoded as JSON. This requires a streaming-aware projection
   layer in the Beam pipeline code.
 - **`append` strategy only:** Streaming pipelines cannot use `incremental` (upsert)
   strategy — there is no batch to deduplicate within. The pipeline YAML must use
-  `build.strategy: append`. `pvc validate` should reject `strategy: incremental` on a
+  `build.strategy: append`. `ddt validate` should reject `strategy: incremental` on a
   streaming pipeline with a clear error.
 
 ## Known Expected Findings (Pre-identified)
@@ -275,18 +275,18 @@ is entirely unimplemented. Document them and stop — do not attempt to work aro
 missing CLI commands by writing custom Python.
 
 - **Blocking:** `source.type: pubsub` is not a valid source type — `models.py` only
-  knows `http` and `python`. `pvc validate` will reject the pipeline YAML.
+  knows `http` and `python`. `ddt validate` will reject the pipeline YAML.
 - **Blocking:** `deploy.type` is not a field in the `Deploy` model — `models.py` only
   has `schedule` and `paused`. Validate will reject `type: streaming`.
-- **Blocking:** `pvc deploy` has no streaming code path — it always provisions via the
+- **Blocking:** `ddt deploy` has no streaming code path — it always provisions via the
   batch path (Cloud Build + Cloud Run + Terraform `batch_pipeline` module).
 - **Blocking:** No `streaming_pipeline` Terraform module exists at
-  `pvc/infra/modules/gcp/streaming_pipeline/`. The batch module provisions
+  `ddt/infra/modules/gcp/streaming_pipeline/`. The batch module provisions
   `google_cloud_run_v2_job`; the streaming module must provision
   `google_dataflow_flex_template_job`.
-- **Blocking:** No Beam runner code exists in pvc — there is no Beam pipeline that reads
+- **Blocking:** No Beam runner code exists in ddt — there is no Beam pipeline that reads
   from Pub/Sub, applies schema projection, and writes windowed Parquet to GCS.
-- **Major:** `pvc undeploy` uses `terraform destroy`, which for a Dataflow job will call
+- **Major:** `ddt undeploy` uses `terraform destroy`, which for a Dataflow job will call
   cancel (not drain). A dedicated drain + poll sequence is needed before `terraform destroy`.
 
 ## Credentials Required
@@ -296,7 +296,7 @@ No new credential keys beyond what `gcp-data-lake` already uses:
 - `catalog: gcp` — set in `testing/test_config.yml`
 - `gcp.project_id` and `gcp.region` — set in `testing/test_config.yml`
 - GCP authenticated via `gcloud auth application-default login`
-- `gcp.warehouse_bucket` — set after `pvc gcp setup` completes
+- `gcp.warehouse_bucket` — set after `ddt gcp setup` completes
 
 **Additional GCP APIs that must be enabled before this scenario runs:**
 ```bash
@@ -331,9 +331,9 @@ as the batch-deployment scenario comment block), not as new keys.
   clock time, not message count.
 - Dataflow drain (Phase 4) takes 1–5 minutes. Poll `gcloud dataflow jobs describe
   <job_id> --format "value(currentState)"` until it reaches `JOB_STATE_DRAINED`.
-- The Pub/Sub subscription `pvc-test-clicks-sub` should be cleaned up after the test
+- The Pub/Sub subscription `ddt-test-clicks-sub` should be cleaned up after the test
   run (Phase 4 step 9) — it is a test artifact.
-- If `pvc undeploy` calls Terraform destroy directly on a Dataflow job, Terraform will
+- If `ddt undeploy` calls Terraform destroy directly on a Dataflow job, Terraform will
   call the GCP delete API which maps to cancel, not drain. This is a pre-identified
   finding (Major severity) — record it if observed and note the drain command:
   `gcloud dataflow jobs drain <job_id> --region us-central1 --project <project_id>`

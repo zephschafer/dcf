@@ -13,8 +13,8 @@ chain testing, and YAML validation completed. Runtime deduplication not tested.
 - [x] Phase 1: README / skill gap documented — does docs cover Python connectors?
       → README covers the interface well; skill has two gaps (F-024, F-025)
 - [x] Phase 2: Connector imports without error
-      → `connectors.linear_issues` imports cleanly via both direct and pvc import chain
-- [ ] Phase 2: `pvc run linear_issues --limit 1` returns at least 1 row
+      → `connectors.linear_issues` imports cleanly via both direct and ddt import chain
+- [ ] Phase 2: `ddt run linear_issues --limit 1` returns at least 1 row
       → Skipped — no LINEAR_API_KEY
 - [x] Phase 2: `state.name` nested field extracted (via connector-level logic)
       → Flattened in connector: `state_name = node["state"]["name"]`
@@ -39,7 +39,7 @@ chain testing, and YAML validation completed. Runtime deduplication not tested.
 | `dynamic_params` contents | All params merged: static values + iterate values + CLI `--param` overrides | `runner.py:35` |
 | Return type | `list[dict]` — NOT generator, NOT iterator | `fetcher.py:_fetch_python:return fn(dynamic_params)` |
 | Auth handling | **No `auth` field on PythonSource** — connector must read credentials from `dynamic_params` (pass via `{{ env.VAR }}` param) or directly from `os.environ` | `models.py:PythonSource` |
-| Pagination | Entirely connector-managed — pvc has no pagination protocol | `models.py:PythonSource` docstring |
+| Pagination | Entirely connector-managed — ddt has no pagination protocol | `models.py:PythonSource` docstring |
 | No-iterate case | `build_request_sequence([]) → [{}]`; connector called once with static params only | `iterator.py:83` |
 
 **Key observation:** Auth is not carried over from YAML to Python connectors.
@@ -48,9 +48,9 @@ The recommended pattern (pass key as static param with `{{ env.VAR }}`) works bu
 ## What Worked
 
 - YAML validation: ✓ — validates with correct warning about `LINEAR_API_KEY` not being set
-- Module import via pvc chain: ✓ — `connectors.linear_issues` resolves correctly from project root
+- Module import via ddt chain: ✓ — `connectors.linear_issues` resolves correctly from project root
 - Function resolution: ✓ — `getattr(mod, "fetch_issues")` works as expected
-- Env var warning: ✓ — `pvc validate` correctly warns `LINEAR_API_KEY` not set (F-008 working)
+- Env var warning: ✓ — `ddt validate` correctly warns `LINEAR_API_KEY` not set (F-008 working)
 - PythonSource model: ✓ — `params` with `{{ env.VAR }}` values are resolved before connector call
 
 ## What Failed / Was Blocked
@@ -142,4 +142,4 @@ Files written:
 
 4. F-025: In `new-pipeline.md`, add a note under the Python connector section explaining
    that `PythonSource` has no `auth` block — pass credentials as a static param using
-   `{{ env.VAR }}` syntax so pvc resolves and passes the key to the connector.
+   `{{ env.VAR }}` syntax so ddt resolves and passes the key to the connector.

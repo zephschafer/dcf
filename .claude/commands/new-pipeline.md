@@ -1,4 +1,4 @@
-You are helping the user create a new pvc pipeline. pvc is a YAML-driven data ingestion framework that writes to a local Apache Iceberg data lake.
+You are helping the user create a new ddt pipeline. ddt is a YAML-driven data ingestion framework that writes to a local Apache Iceberg data lake.
 
 Follow these steps in order. Do not skip ahead — each step informs the next.
 
@@ -70,7 +70,7 @@ Pick the source type **before** writing any YAML. The wrong choice requires a fu
 ### Use `type: http` when all of these are true:
 - The request is a **GET** (or a POST with a **static** body — rare)
 - Auth is a header, bearer token, or query param (no pre-request needed)
-- Pagination is **date-range or categorical** — pvc iterates over known values upfront
+- Pagination is **date-range or categorical** — ddt iterates over known values upfront
 - The response is **JSON with a records array** or **CSV**
 
 **Examples:** GitHub REST API, Portland Maps API, OpenWeatherMap, any REST endpoint that returns `{"data": [...]}`.
@@ -90,7 +90,7 @@ Pick the source type **before** writing any YAML. The wrong choice requires a fu
 
 ---
 
-**`type: http`** — pvc constructs the request and parses the response automatically.
+**`type: http`** — ddt constructs the request and parses the response automatically.
 
 **`type: python`** — write a function in `connectors/` that receives params and returns `list[dict]`. The function is responsible for the full fetch-and-return cycle for one iteration, including all pagination.
 
@@ -117,7 +117,7 @@ def fetch_data(dynamic_params: dict) -> list[dict]:
     ...
 ```
 
-`{{ env.MY_API_KEY }}` is resolved by pvc before the connector is called — the connector always receives the real value, never the placeholder string.
+`{{ env.MY_API_KEY }}` is resolved by ddt before the connector is called — the connector always receives the real value, never the placeholder string.
 
 ### For `type: python`: design the scraper function
 
@@ -129,7 +129,7 @@ def fetch_data(dynamic_params: dict) -> list[dict]:
 
 `dynamic_params` contains ALL params: both iterate values (e.g. `city=portland`) and static params from the YAML (e.g. `start_date`, `max_records`, `api_key`). The function is responsible for the full fetch-and-return cycle for one iteration.
 
-Important: pvc passes static param values as-is from the YAML. If the YAML has `value: "today"`, the function receives the literal string `"today"` — it does not get resolved to a date. Handle this in the function:
+Important: ddt passes static param values as-is from the YAML. If the YAML has `value: "today"`, the function receives the literal string `"today"` — it does not get resolved to a date. Handle this in the function:
 ```python
 if end_date == "today":
     end_date = date.today().isoformat()
@@ -151,7 +151,7 @@ For `type: python` pipelines that span a date range, pass `start_date` and `end_
 
 ## 6. Write the files
 
-For `type: python` pipelines, write the scraper first so you can test the fetch logic in isolation before wiring it into pvc:
+For `type: python` pipelines, write the scraper first so you can test the fetch logic in isolation before wiring it into ddt:
 1. Use `write_connector` to save `connectors/{name}.py`
 2. Quickly verify the scraper returns sensible data for one iteration by calling it directly
 3. Use `write_pipeline` to save `pipelines/{name}.yml`
@@ -198,13 +198,13 @@ If the count grows on re-run, the primary key is not matching correctly — chec
 
 ## 10. (Optional) Deploy to GCP
 
-If the user wants this pipeline to run on a schedule in the cloud rather than just locally, pvc supports deploying to GCP via Cloud Composer (Airflow) + Cloud Run.
+If the user wants this pipeline to run on a schedule in the cloud rather than just locally, ddt supports deploying to GCP via Cloud Composer (Airflow) + Cloud Run.
 
 **Prerequisites — run once per project:**
 ```bash
-pvc gcp setup --project-id <gcp-project-id> --region us-central1
+ddt gcp setup --project-id <gcp-project-id> --region us-central1
 ```
-This provisions a GCS warehouse bucket and a service account. Set `catalog: gcp` in `project.yml` (or re-run `pvc init`).
+This provisions a GCS warehouse bucket and a service account. Set `catalog: gcp` in `project.yml` (or re-run `ddt init`).
 
 **Enable required GCP APIs:**
 ```bash
@@ -221,9 +221,9 @@ deploy:
 
 **Deploy with one command:**
 ```bash
-pvc deploy <pipeline-name>    # provisions Cloud Run job + Composer DAG
-pvc undeploy <pipeline-name>  # tears down job/DAG without touching data
-pvc deploy-status             # list all deployed pipelines
+ddt deploy <pipeline-name>    # provisions Cloud Run job + Composer DAG
+ddt undeploy <pipeline-name>  # tears down job/DAG without touching data
+ddt deploy-status             # list all deployed pipelines
 ```
 
 Only suggest this step if the user has asked about scheduling, production deployment, or running without manual intervention.

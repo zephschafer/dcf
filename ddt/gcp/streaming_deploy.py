@@ -18,11 +18,11 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-_PVC_PKG_DIR = Path(__file__).parent.parent
-_PVC_REPO_ROOT = _PVC_PKG_DIR.parent
-_STREAMING_MODULE_DIR = _PVC_PKG_DIR / "infra" / "modules" / "gcp" / "streaming_pipeline"
-_PIPELINE_TF_DIR = Path.home() / ".pvc" / "terraform" / "pipelines"
-_TF_PLUGIN_CACHE = Path.home() / ".pvc" / "terraform" / ".plugin-cache"
+_DDT_PKG_DIR = Path(__file__).parent.parent
+_DDT_REPO_ROOT = _DDT_PKG_DIR.parent
+_STREAMING_MODULE_DIR = _DDT_PKG_DIR / "infra" / "modules" / "gcp" / "streaming_pipeline"
+_PIPELINE_TF_DIR = Path.home() / ".ddt" / "terraform" / "pipelines"
+_TF_PLUGIN_CACHE = Path.home() / ".ddt" / "terraform" / ".plugin-cache"
 
 
 # ------------------------------------------------------------------ #
@@ -98,7 +98,7 @@ def undeploy(pipeline_name: str, deployment: dict, gcp_config: dict) -> None:
 # ------------------------------------------------------------------ #
 
 def _image_uri(project_id: str, region: str, pipeline_name: str) -> str:
-    return f"{region}-docker.pkg.dev/{project_id}/pvc-runner/{pipeline_name}-stream:latest"
+    return f"{region}-docker.pkg.dev/{project_id}/ddt-runner/{pipeline_name}-stream:latest"
 
 
 def _build_image(
@@ -111,11 +111,11 @@ def _build_image(
 ) -> None:
     _ensure_artifact_registry_repo(project_id, region)
 
-    with tempfile.TemporaryDirectory(prefix="pvc-stream-build-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="ddt-stream-build-") as tmp:
         tmp_path = Path(tmp)
 
-        shutil.copytree(_PVC_PKG_DIR, tmp_path / "pvc")
-        shutil.copy2(_PVC_REPO_ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
+        shutil.copytree(_DDT_PKG_DIR, tmp_path / "ddt")
+        shutil.copy2(_DDT_REPO_ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
 
         for subdir in ("pipelines", "connectors"):
             src = project_root / subdir
@@ -140,12 +140,12 @@ def _build_image(
             FROM gcr.io/dataflow-templates-base/python312-template-launcher-base
             WORKDIR /template
             COPY pyproject.toml .
-            COPY pvc/ ./pvc/
+            COPY ddt/ ./ddt/
             RUN pip install --no-cache-dir -e . 'apache-beam[gcp]'
             COPY pipelines/ ./pipelines/
             COPY connectors/ ./connectors/
             COPY project.yml .
-            ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/template/pvc/gcp/beam_runner.py"
+            ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/template/ddt/gcp/beam_runner.py"
         """))
 
         result = subprocess.run(
@@ -169,7 +169,7 @@ def _build_image(
 def _ensure_artifact_registry_repo(project_id: str, region: str) -> None:
     check = subprocess.run(
         [
-            "gcloud", "artifacts", "repositories", "describe", "pvc-runner",
+            "gcloud", "artifacts", "repositories", "describe", "ddt-runner",
             "--location", region, "--project", project_id,
         ],
         capture_output=True,
@@ -177,7 +177,7 @@ def _ensure_artifact_registry_repo(project_id: str, region: str) -> None:
     if check.returncode != 0:
         result = subprocess.run(
             [
-                "gcloud", "artifacts", "repositories", "create", "pvc-runner",
+                "gcloud", "artifacts", "repositories", "create", "ddt-runner",
                 "--repository-format=docker",
                 "--location", region,
                 "--project", project_id,
@@ -209,13 +209,13 @@ def _upload_flex_template_spec(
         "image": image_uri,
         "sdk_info": {"language": "PYTHON"},
         "metadata": {
-            "name": f"pvc-stream-{pipeline_name}",
-            "description": f"pvc streaming pipeline: {pipeline_name}",
+            "name": f"ddt-stream-{pipeline_name}",
+            "description": f"ddt streaming pipeline: {pipeline_name}",
             "parameters": [
                 {
                     "name": "pipeline_name",
                     "label": "Pipeline Name",
-                    "helpText": "pvc pipeline name (must match a file in pipelines/)",
+                    "helpText": "ddt pipeline name (must match a file in pipelines/)",
                 },
                 {
                     "name": "subscription",
@@ -242,7 +242,7 @@ def _upload_flex_template_spec(
     }
 
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="pvc-template-", delete=False
+        mode="w", suffix=".json", prefix="ddt-template-", delete=False
     ) as f:
         json.dump(spec, f, indent=2)
         tmp_path = f.name

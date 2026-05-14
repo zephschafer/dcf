@@ -70,7 +70,7 @@ Key context: quipu project has `catalog: gcp`. This shaped most of the findings.
 ## Friction Points
 
 - No github_commits table — scenario required re-scoping to public + private repos. This
-  is expected per scenario guidance, not a pvc finding.
+  is expected per scenario guidance, not a ddt finding.
 - The LIMIT bypass for COPY TO is accidental and fragile. Any user who forgets LIMIT
   gets a misleading parse error with no hint about the root cause.
 - Raw `read_parquet()` paths are the only way to query local-only tables in GCP mode,
@@ -124,7 +124,7 @@ The resulting "table" is NOT discoverable via `list_warehouse_tables` or queryab
 namespace.table syntax in GCP mode.
 
 **Recommended dbt-replacement pattern (current):** Python connector pipeline that reads
-from warehouse with DuckDB and returns transformed rows. pvc then writes via normal
+from warehouse with DuckDB and returns transformed rows. ddt then writes via normal
 pipeline mechanism including GCS upload. Cumbersome but correct.
 
 **Proposed fix:** `materialize_model` MCP tool (see F-020).

@@ -1,4 +1,4 @@
-"""Shared fixtures for pvc unit tests."""
+"""Shared fixtures for ddt unit tests."""
 import pytest
 
 

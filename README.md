@@ -1,12 +1,12 @@
-# pvc
+# ddt
 
 A framework for building data lakes from scatch. 
 User: Define pipelines by specifying the basic configs (source, destination, API keys) in YAML (like dbt models)
-PVC: Builds datalake. Builds and deploys pipeline which writes to datalake.
+DDT: Builds datalake. Builds and deploys pipeline which writes to datalake.
 
 You install it as a dependency in a separate data project repository. See [quipu-data-generator](https://github.com/zephschafer/quipu) for a working example.
 
-**New to pvc?** Start with the [quickstart guide](QUICKSTART.md) — a step-by-step walkthrough using a real GitHub pipeline.
+**New to ddt?** Start with the [quickstart guide](QUICKSTART.md) — a step-by-step walkthrough using a real GitHub pipeline.
 
 ---
 
@@ -29,17 +29,17 @@ You install it as a dependency in a separate data project repository. See [quipu
 
 ---
 
-## Creating a pvc project
+## Creating a ddt project
 
-A pvc project is a plain directory with this layout:
+A ddt project is a plain directory with this layout:
 
 ```
 my-data-project/
 ├── pipelines/           # Pipeline YAML definitions
 ├── connectors/          # Python connector modules (for type:python sources)
-├── warehouse/           # Iceberg data lake — written by pvc (gitignore this)
+├── warehouse/           # Iceberg data lake — written by ddt (gitignore this)
 ├── project.yml          # Local config: API keys, catalog type (gitignore this)
-├── pyproject.toml       # Depends on pvc; lists any scraper dependencies
+├── pyproject.toml       # Depends on ddt; lists any scraper dependencies
 └── uv.lock
 ```
 
@@ -51,7 +51,7 @@ name = "my-data-project"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "pvc",
+    "ddt",
     # add scraper dependencies here (e.g. beautifulsoup4)
 ]
 
@@ -59,7 +59,7 @@ dependencies = [
 package = false
 
 [tool.uv.sources]
-pvc = { path = "../pvc", editable = true }  # local dev; swap for a version once published
+ddt = { path = "../ddt", editable = true }  # local dev; swap for a version once published
 ```
 
 **`.gitignore`** essentials:
@@ -75,8 +75,8 @@ __pycache__/
 
 ```bash
 uv sync
-uv run pvc init        # prompts for API keys, region filter, catalog type → writes project.yml
-uv run pvc validate all
+uv run ddt init        # prompts for API keys, region filter, catalog type → writes project.yml
+uv run ddt validate all
 ```
 
 ---
@@ -85,30 +85,30 @@ uv run pvc validate all
 
 ```bash
 # Run a pipeline
-uv run pvc run <name>
-uv run pvc run all
+uv run ddt run <name>
+uv run ddt run all
 
 # Date range override (for pipelines with date_range iterate)
-uv run pvc run portland_permits --start 2024-01-01 --end 2024-03-31
+uv run ddt run portland_permits --start 2024-01-01 --end 2024-03-31
 
 # Limit to first N iterations (useful for testing)
-uv run pvc run craigslist_apts --limit 1
+uv run ddt run craigslist_apts --limit 1
 
 # Override a param at runtime
-uv run pvc run craigslist_apts --limit 1 --param max_records=5
+uv run ddt run craigslist_apts --limit 1 --param max_records=5
 
 # Validate YAML without running
-uv run pvc validate <name>
-uv run pvc validate all
+uv run ddt validate <name>
+uv run ddt validate all
 
 # GCP cloud lake
-uv run pvc gcp setup --project-id <id> --region us-central1
-uv run pvc gcp status
-uv run pvc gcp teardown                  # destroys all GCP resources, resets to catalog: local
+uv run ddt gcp setup --project-id <id> --region us-central1
+uv run ddt gcp status
+uv run ddt gcp teardown                  # destroys all GCP resources, resets to catalog: local
 
 # MCP server (for Claude integration)
-uv run pvc mcp serve
-uv run pvc mcp setup-desktop   # registers pvc in Claude Desktop's config
+uv run ddt mcp serve
+uv run ddt mcp setup-desktop   # registers ddt in Claude Desktop's config
 ```
 
 ---
@@ -192,9 +192,9 @@ build:
 
 ### Source types
 
-**`type: http`** — structured API responses (JSON or CSV). pvc constructs the request, handles auth, and parses the response.
+**`type: http`** — structured API responses (JSON or CSV). ddt constructs the request, handles auth, and parses the response.
 
-**`type: python`** — anything that needs custom logic: HTML scraping, multi-step auth, pagination that depends on response content. Write a Python function in `connectors/`; pvc calls it for each iteration.
+**`type: python`** — anything that needs custom logic: HTML scraping, multi-step auth, pagination that depends on response content. Write a Python function in `connectors/`; ddt calls it for each iteration.
 
 ```yaml
 source:
@@ -277,7 +277,7 @@ warehouse/
 **With Spark:**
 
 ```python
-from pvc.spark_session import get_spark
+from ddt.spark_session import get_spark
 spark = get_spark()
 
 spark.table("local.portland_permits.permits_loader").show()
@@ -298,7 +298,7 @@ Or use the MCP `query_warehouse` tool, which handles the path rewriting automati
 
 ## Configuration — `project.yml`
 
-Created by `pvc init` at the project root. Gitignored.
+Created by `ddt init` at the project root. Gitignored.
 
 ```yaml
 portlandmaps_api_key: ""   # blank = use built-in default key
@@ -312,8 +312,8 @@ catalog: local              # local | gcp
 
 ```bash
 gcloud auth application-default login
-uv run pvc gcp setup --project-id my-project --region us-central1
-uv run pvc gcp status
+uv run ddt gcp setup --project-id my-project --region us-central1
+uv run ddt gcp status
 ```
 
 Updates `project.yml` automatically. Set `catalog: gcp` to route all writes to GCS.
@@ -322,14 +322,14 @@ Updates `project.yml` automatically. Set `catalog: gcp` to route all writes to G
 
 ## MCP server
 
-pvc exposes an MCP server so Claude can build pipelines interactively:
+ddt exposes an MCP server so Claude can build pipelines interactively:
 
 ```bash
 # Register with Claude Desktop (run once from your project directory)
-uv run pvc mcp setup-desktop
+uv run ddt mcp setup-desktop
 
 # Or start manually
-uv run pvc mcp serve
+uv run ddt mcp serve
 ```
 
 **Available tools:** `list_pipelines`, `get_pipeline`, `validate_pipeline`, `run_pipeline`, `list_warehouse_tables`, `query_warehouse`, `write_pipeline`, `write_scraper`.
@@ -338,20 +338,20 @@ The `.claude/commands/` directory in your project repo can hold Claude skills (s
 
 ---
 
-## Developing pvc
+## Developing ddt
 
 Clone this repo, then create or point to a project for testing:
 
 ```bash
-git clone https://github.com/Data-Dispatch/pvc
-cd pvc
+git clone https://github.com/Data-Dispatch/ddt
+cd ddt
 uv sync
 
 # Test against the demo project
 git clone https://github.com/Data-Dispatch/quipu-data-generator ../quipu-data-generator
 cd ../quipu-data-generator
-uv sync   # picks up pvc from ../pvc via editable path dep
-uv run pvc validate all
+uv sync   # picks up ddt from ../ddt via editable path dep
+uv run ddt validate all
 ```
 
 Or create a minimal test project:
@@ -363,13 +363,13 @@ cat > pyproject.toml << 'EOF'
 name = "my-test-project"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["pvc"]
+dependencies = ["ddt"]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
-pvc = { path = "../pvc", editable = true }
+ddt = { path = "../ddt", editable = true }
 EOF
 
 cat > project.yml << 'EOF'
@@ -378,17 +378,17 @@ EOF
 
 mkdir pipelines
 uv sync
-uv run pvc validate all   # "OK — 0 pipeline(s)"
+uv run ddt validate all   # "OK — 0 pipeline(s)"
 ```
 
 ---
 
-## pvc package structure
+## ddt package structure
 
 ```
-pvc/
+ddt/
 ├── cli.py              Entry point (Typer app)
-├── project.py          Project root discovery (CWD walk / PVC_PROJECT_DIR)
+├── project.py          Project root discovery (CWD walk / DDT_PROJECT_DIR)
 ├── spark_session.py    PySpark + Iceberg session factory
 ├── mcp_server.py       MCP server (FastMCP)
 ├── warehouse_reader.py DuckDB-based warehouse query layer

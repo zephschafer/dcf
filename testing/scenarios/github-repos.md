@@ -20,7 +20,7 @@ GitHub API docs: https://docs.github.com/en/rest/repos/repos#list-organization-r
 
 ## Success Criteria
 
-- [ ] Pipeline YAML validates successfully (`pvc validate github-repos`)
+- [ ] Pipeline YAML validates successfully (`ddt validate github-repos`)
 - [ ] `--limit 1` run fetches at least 1 real repository row
 - [ ] Schema projection captures: id, name, full_name, description, language, stargazers_count, forks_count, created_at, updated_at, html_url
 - [ ] Full run (first page, ~100 repos) writes correctly to warehouse
@@ -47,7 +47,7 @@ None — GitHub public API allows unauthenticated access (rate limited to 60 req
 - If you want to test incremental, switch to `incremental` with `primary_key: id`
 - The response is a top-level JSON array (no nested `records_path` needed — or an empty path)
 - Probe the endpoint directly first to see the real response shape before writing YAML
-- Test both with and without `records_path` to see how pvc handles top-level arrays
+- Test both with and without `records_path` to see how ddt handles top-level arrays
 
 ## By Design Decisions from Prior Runs
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import logging
 
-from pvc.gcp._pipeline_utils import load_columns, to_pyarrow_schema, project_message
+from ddt.gcp._pipeline_utils import load_columns, to_pyarrow_schema, project_message
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,5 @@
 """
-Tests for pvc.warehouse_reader covering F-018, F-019, F-020, F-021.
+Tests for ddt.warehouse_reader covering F-018, F-019, F-020, F-021.
 
 All tests use a temporary local warehouse with real Parquet files — no GCS,
 no mocking of DuckDB. GCP-catalog behavior is tested by patching _project_config
@@ -15,7 +15,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-import pvc.warehouse_reader as wr
+import ddt.warehouse_reader as wr
 
 
 # ------------------------------------------------------------------ #

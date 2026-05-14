@@ -19,7 +19,7 @@ def _gcs_warehouse_bucket() -> str:
     bucket = cfg.get("gcp", {}).get("warehouse_bucket")
     if not bucket:
         raise RuntimeError(
-            "GCP warehouse bucket not configured. Run: pvc gcp setup --project-id ... --region ..."
+            "GCP warehouse bucket not configured. Run: ddt gcp setup --project-id ... --region ..."
         )
     return bucket
 
@@ -55,7 +55,7 @@ def write(
         return
 
     df = df.copy()
-    df["pvc_updated_at"] = _pst_now()
+    df["ddt_updated_at"] = _pst_now()
 
     namespace = pipeline.namespace or pipeline.name
     build = pipeline.build

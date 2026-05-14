@@ -18,8 +18,8 @@ from textwrap import dedent
 
 import yaml
 
-_PVC_PKG_DIR = Path(__file__).parent
-_PVC_REPO_ROOT = _PVC_PKG_DIR.parent
+_DDT_PKG_DIR = Path(__file__).parent
+_DDT_REPO_ROOT = _DDT_PKG_DIR.parent
 
 
 def _collect_env_vars(project_root: Path, pipeline_name: str) -> list[str]:
@@ -92,7 +92,7 @@ def publish(pipeline_name: str, deployment_state: dict, message_json: str, count
     from kafka import KafkaProducer
 
     bootstrap = deployment_state.get("kafka_external_bootstrap", "localhost:29092")
-    topic = deployment_state.get("kafka_topic", f"pvc-{pipeline_name}")
+    topic = deployment_state.get("kafka_topic", f"ddt-{pipeline_name}")
 
     producer = KafkaProducer(
         bootstrap_servers=bootstrap,
@@ -109,7 +109,7 @@ def publish(pipeline_name: str, deployment_state: dict, message_json: str, count
 # ------------------------------------------------------------------ #
 
 def _deploy_batch(pipeline_name: str, project_root: Path) -> dict:
-    image_tag = f"pvc-local/{pipeline_name}:latest"
+    image_tag = f"ddt-local/{pipeline_name}:latest"
     warehouse_path = project_root / "warehouse"
     warehouse_path.mkdir(exist_ok=True)
 
@@ -127,7 +127,7 @@ def _deploy_batch(pipeline_name: str, project_root: Path) -> dict:
     result = subprocess.run(
         [
             "docker", "run", "--rm",
-            "--name", f"pvc-verify-{pipeline_name}",
+            "--name", f"ddt-verify-{pipeline_name}",
             "-e", f"PIPELINE_NAME={pipeline_name}",
             *env_args,
             "-v", f"{warehouse_path}:/app/warehouse",
@@ -149,10 +149,10 @@ def _deploy_batch(pipeline_name: str, project_root: Path) -> dict:
 
 
 def _build_batch_image(project_root: Path, image_tag: str) -> None:
-    with tempfile.TemporaryDirectory(prefix="pvc-local-batch-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="ddt-local-batch-") as tmp:
         tmp_path = Path(tmp)
-        shutil.copytree(_PVC_PKG_DIR, tmp_path / "pvc")
-        shutil.copy2(_PVC_REPO_ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
+        shutil.copytree(_DDT_PKG_DIR, tmp_path / "ddt")
+        shutil.copy2(_DDT_REPO_ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
 
         for subdir in ("pipelines", "connectors"):
             src = project_root / subdir
@@ -169,13 +169,13 @@ def _build_batch_image(project_root: Path, image_tag: str) -> None:
                 openjdk-21-jre-headless && rm -rf /var/lib/apt/lists/*
             WORKDIR /app
             COPY pyproject.toml .
-            COPY pvc/ ./pvc/
+            COPY ddt/ ./ddt/
             RUN pip install --no-cache-dir -e .
             COPY pipelines/ ./pipelines/
             COPY connectors/ ./connectors/
             COPY project.yml .
             ENV PIPELINE_NAME=""
-            CMD ["sh", "-c", "pvc run $PIPELINE_NAME"]
+            CMD ["sh", "-c", "ddt run $PIPELINE_NAME"]
         """))
 
         result = subprocess.run(
@@ -187,7 +187,7 @@ def _build_batch_image(project_root: Path, image_tag: str) -> None:
 
 
 def _undeploy_batch(pipeline_name: str, state: dict) -> None:
-    image_tag = state.get("image_tag", f"pvc-local/{pipeline_name}:latest")
+    image_tag = state.get("image_tag", f"ddt-local/{pipeline_name}:latest")
     print(f"  Removing local image '{image_tag}'...", flush=True)
     subprocess.run(["docker", "rmi", "-f", image_tag], capture_output=True)
 
@@ -197,15 +197,15 @@ def _undeploy_batch(pipeline_name: str, state: dict) -> None:
 # ------------------------------------------------------------------ #
 
 def _kafka_container(name: str) -> str:
-    return f"pvc-kafka-{name}"
+    return f"ddt-kafka-{name}"
 
 
 def _runner_container(name: str) -> str:
-    return f"pvc-runner-{name}"
+    return f"ddt-runner-{name}"
 
 
 def _network_name(name: str) -> str:
-    return f"pvc-{name}"
+    return f"ddt-{name}"
 
 
 def _deploy_streaming(
@@ -217,8 +217,8 @@ def _deploy_streaming(
     network = _network_name(pipeline_name)
     kafka_cname = _kafka_container(pipeline_name)
     runner_cname = _runner_container(pipeline_name)
-    image_tag = f"pvc-local/{pipeline_name}-stream:latest"
-    kafka_topic = f"pvc-{pipeline_name}"
+    image_tag = f"ddt-local/{pipeline_name}-stream:latest"
+    kafka_topic = f"ddt-{pipeline_name}"
     warehouse_path = project_root / "warehouse"
     warehouse_path.mkdir(exist_ok=True)
 
@@ -335,7 +335,7 @@ def _wait_for_kafka(bootstrap: str, timeout: int = 30) -> None:
             time.sleep(2)
     raise RuntimeError(
         f"Kafka did not become available at {bootstrap} within {timeout}s.\n"
-        "Check: docker logs pvc-kafka-<pipeline>"
+        "Check: docker logs ddt-kafka-<pipeline>"
     )
 
 
@@ -353,10 +353,10 @@ def _create_kafka_topic(bootstrap: str, topic_name: str) -> None:
 
 
 def _build_stream_image(project_root: Path, image_tag: str) -> None:
-    with tempfile.TemporaryDirectory(prefix="pvc-local-stream-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="ddt-local-stream-") as tmp:
         tmp_path = Path(tmp)
-        shutil.copytree(_PVC_PKG_DIR, tmp_path / "pvc")
-        shutil.copy2(_PVC_REPO_ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
+        shutil.copytree(_DDT_PKG_DIR, tmp_path / "ddt")
+        shutil.copy2(_DDT_REPO_ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
 
         for subdir in ("pipelines", "connectors"):
             src = project_root / subdir
@@ -371,12 +371,12 @@ def _build_stream_image(project_root: Path, image_tag: str) -> None:
             FROM python:3.12-slim
             WORKDIR /app
             COPY pyproject.toml .
-            COPY pvc/ ./pvc/
+            COPY ddt/ ./ddt/
             RUN pip install --no-cache-dir -e . 'kafka-python>=2.0'
             COPY pipelines/ ./pipelines/
             COPY connectors/ ./connectors/
             COPY project.yml .
-            ENTRYPOINT ["python", "-m", "pvc.local_stream_runner"]
+            ENTRYPOINT ["python", "-m", "ddt.local_stream_runner"]
         """))
 
         result = subprocess.run(
@@ -421,7 +421,7 @@ def _undeploy_streaming(pipeline_name: str, state: dict) -> None:
     runner = state.get("runner_container", _runner_container(pipeline_name))
     kafka = state.get("kafka_container", _kafka_container(pipeline_name))
     network = state.get("docker_network", _network_name(pipeline_name))
-    image_tag = state.get("image_tag", f"pvc-local/{pipeline_name}-stream:latest")
+    image_tag = state.get("image_tag", f"ddt-local/{pipeline_name}-stream:latest")
 
     print(f"  Stopping stream runner '{runner}'...", flush=True)
     _stop_remove(runner)

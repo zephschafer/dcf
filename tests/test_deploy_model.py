@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from pvc.config.models import Deploy, Pipeline
+from ddt.config.models import Deploy, Pipeline
 
 
 # ------------------------------------------------------------------ #

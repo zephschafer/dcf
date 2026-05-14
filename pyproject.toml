@@ -1,5 +1,5 @@
 [project]
-name = "pvc"
+name = "ddt"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
@@ -21,10 +21,10 @@ dependencies = [
 ]
 
 [project.scripts]
-pvc = "pvc.cli:app"
+ddt = "ddt.cli:app"
 
 [tool.setuptools.packages.find]
-include = ["pvc*"]
+include = ["ddt*"]
 
 [tool.uv]
 package = true

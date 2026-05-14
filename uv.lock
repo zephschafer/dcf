@@ -267,6 +267,55 @@ wheels = [
 ]
 
 [[package]]
+name = "ddt"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "duckdb" },
+    { name = "google-api-python-client" },
+    { name = "google-auth" },
+    { name = "google-cloud-secret-manager" },
+    { name = "google-cloud-storage" },
+    { name = "kafka-python" },
+    { name = "mcp" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "pydantic" },
+    { name = "pyspark" },
+    { name = "pytz" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "typer" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "duckdb", specifier = ">=1.0" },
+    { name = "google-api-python-client", specifier = ">=2.126" },
+    { name = "google-auth", specifier = ">=2.29" },
+    { name = "google-cloud-secret-manager", specifier = ">=2.20" },
+    { name = "google-cloud-storage", specifier = ">=2.16" },
+    { name = "kafka-python", specifier = ">=2.0" },
+    { name = "mcp", specifier = ">=1.0" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "pyspark", specifier = "==4.0.2" },
+    { name = "pytz" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "requests" },
+    { name = "typer", extras = ["all"], specifier = ">=0.9" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.0" }]
+
+[[package]]
 name = "duckdb"
 version = "1.5.2"
 source = { registry = "https://pypi.org/simple" }
@@ -842,55 +891,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/16/92/d1e32e3e0d894fe00b15ce28ad4944ab692713f2e7f0a99787405e43533a/protobuf-6.33.6-cp39-abi3-manylinux2014_x86_64.whl", hash = "sha256:e9db7e292e0ab79dd108d7f1a94fe31601ce1ee3f7b79e0692043423020b0593", size = 323436, upload-time = "2026-03-18T19:04:55.768Z" },
     { url = "https://files.pythonhosted.org/packages/c4/72/02445137af02769918a93807b2b7890047c32bfb9f90371cbc12688819eb/protobuf-6.33.6-py3-none-any.whl", hash = "sha256:77179e006c476e69bf8e8ce866640091ec42e1beb80b213c3900006ecfba6901", size = 170656, upload-time = "2026-03-18T19:04:59.826Z" },
 ]
-
-[[package]]
-name = "pvc"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "duckdb" },
-    { name = "google-api-python-client" },
-    { name = "google-auth" },
-    { name = "google-cloud-secret-manager" },
-    { name = "google-cloud-storage" },
-    { name = "kafka-python" },
-    { name = "mcp" },
-    { name = "pandas" },
-    { name = "pyarrow" },
-    { name = "pydantic" },
-    { name = "pyspark" },
-    { name = "pytz" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "typer" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "duckdb", specifier = ">=1.0" },
-    { name = "google-api-python-client", specifier = ">=2.126" },
-    { name = "google-auth", specifier = ">=2.29" },
-    { name = "google-cloud-secret-manager", specifier = ">=2.20" },
-    { name = "google-cloud-storage", specifier = ">=2.16" },
-    { name = "kafka-python", specifier = ">=2.0" },
-    { name = "mcp", specifier = ">=1.0" },
-    { name = "pandas" },
-    { name = "pyarrow" },
-    { name = "pydantic", specifier = ">=2" },
-    { name = "pyspark", specifier = "==4.0.2" },
-    { name = "pytz" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "requests" },
-    { name = "typer", extras = ["all"], specifier = ">=0.9" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "py4j"

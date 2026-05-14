@@ -3,11 +3,11 @@
 ## Goal
 
 Build a pipeline that ingests payment records from Stripe. Stripe is Fivetran's
-most-used connector; if pvc can't ingest Stripe, it can't claim to replace Fivetran
+most-used connector; if ddt can't ingest Stripe, it can't claim to replace Fivetran
 for most businesses. This scenario tests cursor-based pagination (the dominant pattern
 for financial APIs) and validates the Python connector as the workaround path.
 
-**Secondary goal:** Establish whether pvc can handle Stripe's data shapes, which are
+**Secondary goal:** Establish whether ddt can handle Stripe's data shapes, which are
 deeply nested and contain sub-objects (customer, payment_method_details, charges).
 
 ## Target API
@@ -65,23 +65,23 @@ Auth: HTTP Basic auth — API key as username, empty string as password.
 (Or Bearer: `Authorization: Bearer sk_live_...`)
 
 Note: Stripe `created` field is a Unix timestamp (integer seconds since epoch),
-not an ISO 8601 string. pvc's `timestamp` type must handle this.
+not an ISO 8601 string. ddt's `timestamp` type must handle this.
 
 ## Test Phases
 
 ### Phase 1 — YAML Path (Document the Pagination Limitation)
 
-Attempt to build a pipeline using only pvc YAML:
+Attempt to build a pipeline using only ddt YAML:
 
 1. Write `pipelines/stripe_payments.yml` using `type: http`, `date_range` iterate
    axis (convert ISO dates to Unix timestamps via format string if supported)
 2. Use `records_path: data` to extract from the `data` array in the response
-3. Run `pvc validate stripe_payments`
-4. Run `pvc run stripe_payments --limit 1` for a narrow date window
-5. Record: does pvc make only one request? If `has_more: true`, does pvc ignore it?
+3. Run `ddt validate stripe_payments`
+4. Run `ddt run stripe_payments --limit 1` for a narrow date window
+5. Record: does ddt make only one request? If `has_more: true`, does ddt ignore it?
    Record the exact row count (should be ≤100 even if more exist).
 6. Document the cursor pagination limitation — `starting_after` cannot be derived
-   from the previous response in pvc YAML.
+   from the previous response in ddt YAML.
 
 Phase 1 success: limitation confirmed with exact behavior documented.
 
@@ -95,8 +95,8 @@ Write a Python connector at `connectors/stripe_payments.py`:
 3. Accept `created_gte` and `created_lte` as Unix timestamp params from pipeline YAML
 4. Schema: id, amount (cents, integer), currency, status, customer_id, created
    (Unix timestamp → timestamp type), card_brand, card_last4
-5. Run `pvc run stripe_payments --limit 1`
-6. Verify: `amount` is in cents (not dollars — pvc has no unit conversion)
+5. Run `ddt run stripe_payments --limit 1`
+6. Verify: `amount` is in cents (not dollars — ddt has no unit conversion)
 7. Verify: `created` Unix timestamp parses correctly as a timestamp type
 8. Run full pipeline, verify deduplication on `id`
 
@@ -118,15 +118,15 @@ Phase 2 success: Python connector with cursor pagination works end-to-end.
 
 - **Cursor pagination:** `starting_after` must be the `id` of the last object in the
   previous response. This is stateful — each page request depends on the previous
-  response. Cannot be expressed in pvc YAML.
+  response. Cannot be expressed in ddt YAML.
 - **Unix timestamps:** Stripe `created` is seconds since epoch (integer), not ISO 8601.
-  pvc's `timestamp` type must handle this format. Unknown if it does — may need
+  ddt's `timestamp` type must handle this format. Unknown if it does — may need
   connector-level conversion.
 - **Deeply nested payment details:** `charges.data[0].payment_method_details.card.brand`
-  requires array indexing (`[0]`), which pvc's dot-notation may not support. Likely
+  requires array indexing (`[0]`), which ddt's dot-notation may not support. Likely
   needs connector-level extraction.
 - **Currency normalization:** `amount` is in the smallest currency unit (cents for USD,
-  yen for JPY which has no sub-unit). No normalization in pvc. Document this and note
+  yen for JPY which has no sub-unit). No normalization in ddt. Document this and note
   that downstream SQL must handle it.
 - **Test mode vs. live mode:** Use `sk_test_...` key to avoid real charges. Test mode
   data may be sparse — if no payment intents exist, create a few via Stripe Dashboard
@@ -134,12 +134,12 @@ Phase 2 success: Python connector with cursor pagination works end-to-end.
 
 ## Known Expected Findings (Pre-identified)
 
-- **Expected Blocking (Schema):** Cursor pagination cannot be expressed in pvc YAML.
-  `starting_after` must be derived from the previous response, which pvc YAML has no
+- **Expected Blocking (Schema):** Cursor pagination cannot be expressed in ddt YAML.
+  `starting_after` must be derived from the previous response, which ddt YAML has no
   mechanism to do.
-- **To investigate:** Does pvc's `timestamp` type handle Unix epoch integers? If not,
+- **To investigate:** Does ddt's `timestamp` type handle Unix epoch integers? If not,
   this is a Schema/Runtime finding (type casting gap).
-- **To investigate:** Does pvc support array indexing in dot-notation paths (e.g.,
+- **To investigate:** Does ddt support array indexing in dot-notation paths (e.g.,
   `charges.data.0.payment_method_details.card.brand`)? If not, deeply nested
   array-wrapped objects require Python connector extraction.
 
@@ -158,7 +158,7 @@ Zeph provides this. Store as `stripe_secret_key` in `project.yml` or as env var.
 - The test project is `/Users/zephschafer/Documents/GitHub/quipu/`
 - Use `namespace: stripe` — routes to `warehouse/stripe/stripe_payments/`
 - Stripe's Basic auth: username = API key, password = empty string.
-  In pvc YAML, this maps to `type: header` with `Authorization: Basic <base64(key:)>`,
+  In ddt YAML, this maps to `type: header` with `Authorization: Basic <base64(key:)>`,
   or `type: bearer` with the key as value. Try bearer first — Stripe accepts both.
 - If no PaymentIntents exist in the test account, create 2-3 test payments via
   Stripe Dashboard (Developers → PaymentIntents → Create) before running the pipeline.

@@ -8,9 +8,9 @@ Date: 2026-05-09 | Tester: Claude Sonnet 4.6 | Scenario: github-private-repos
 ## Success Criteria
 
 ### Phase 1 — Credential Guidance
-- [x] `pvc init` behavior documented: does it offer GitHub credential collection?
+- [x] `ddt init` behavior documented: does it offer GitHub credential collection?
 - [x] `new-pipeline` skill behavior documented: does it guide credential setup?
-- [x] `pvc validate` behavior documented: does it catch missing env vars at validate time?
+- [x] `ddt validate` behavior documented: does it catch missing env vars at validate time?
 - [x] Missing-token error message recorded verbatim — rated below
 
 ### Phase 2 — Invalid Credentials
@@ -31,9 +31,9 @@ Date: 2026-05-09 | Tester: Claude Sonnet 4.6 | Scenario: github-private-repos
 
 ## Phase 1 Findings
 
-### `pvc init` — Does Not Help
+### `ddt init` — Does Not Help
 
-Running `pvc init` prompts only for:
+Running `ddt init` prompts only for:
 ```
 PortlandMaps API key (leave blank to use default):
 Valid regions, comma-separated (blank for all):
@@ -54,7 +54,7 @@ The `new-pipeline` skill (`.claude/commands/new-pipeline.md`) has no mention of:
 The skill jumps straight to probing the API and designing YAML, assuming credentials already exist.
 **→ Confirms Expected F-006**
 
-### `pvc validate` — Passes with Missing Token
+### `ddt validate` — Passes with Missing Token
 
 ```
 OK — 'github_private_repos' (2 params, 0 iterate axes, 12 columns)
@@ -65,7 +65,7 @@ Validate reports success even though `GITHUB_TOKEN` is not set. The `resolve_env
 
 ### Missing Token Error — Verbatim
 
-Running `pvc run github_private_repos --limit 1` without `GITHUB_TOKEN` produces a **full Rich traceback panel** ending with:
+Running `ddt run github_private_repos --limit 1` without `GITHUB_TOKEN` produces a **full Rich traceback panel** ending with:
 
 ```
 OSError: 'GITHUB_TOKEN' is not set — add it as an environment variable or set 
@@ -78,7 +78,7 @@ OSError: 'GITHUB_TOKEN' is not set — add it as an environment variable or set
 - ✗ Full internal traceback is shown (8 stack frames with source code) — overwhelming for a user-facing credential error
 - ✗ No guidance on HOW to get a GitHub token or what scope is needed
 - ✗ `OSError` is confusing — users expect authentication errors, not OS errors (EnvironmentError is a subclass of OSError)
-- ✗ Error fires BEFORE Spark starts, which is good, but the traceback format is inconsistent with the `[pvc]` output style
+- ✗ Error fires BEFORE Spark starts, which is good, but the traceback format is inconsistent with the `[ddt]` output style
 
 **→ Partially confirms Expected F-009** (new additional dimension: full traceback shown rather than clean error line)
 
@@ -115,18 +115,18 @@ auth:
 Running with `GITHUB_TOKEN=ghp_invalid`:
 
 ```
-[pvc] Running 'github_private_repos' — 1 requests
+[ddt] Running 'github_private_repos' — 1 requests
 
   [1/1] 
     fetch error: 401 Client Error: Unauthorized for url: https://api.github.com/user/repos?visibility=private&per_page=100
 
-[pvc] 'github_private_repos' complete → /Users/zephschafer/Documents/GitHub/quipu/warehouse/github/github_private_repos/data
+[ddt] 'github_private_repos' complete → /Users/zephschafer/Documents/GitHub/quipu/warehouse/github/github_private_repos/data
 ```
 
 **Observations:**
 - ✓ HTTP 401 status code is visible
 - ✓ URL is shown — useful for debugging
-- ✓ Error does not crash pvc — fetch error is caught at the request level
+- ✓ Error does not crash ddt — fetch error is caught at the request level
 - ✗ No hint that the credential is wrong (vs. expired, vs. insufficient scope)
 - ✗ The pipeline "completes" with 0 rows — warehouse path is printed even though nothing was written, which is misleading
 - ✗ No guidance: "Check your GITHUB_TOKEN has `repo` scope" or "Regenerate your token at github.com/settings/tokens"
@@ -167,8 +167,8 @@ See pipeline.yml in this directory.
 | Finding | Expected? | Status |
 |---------|-----------|--------|
 | F-006: `new-pipeline` skill has no credential guidance | Expected | Confirmed |
-| F-007: `pvc init` hardcoded to Portland Maps | Expected | Confirmed |
-| F-008: `pvc validate` passes with unset env vars | Expected | Confirmed |
+| F-007: `ddt init` hardcoded to Portland Maps | Expected | Confirmed |
+| F-008: `ddt validate` passes with unset env vars | Expected | Confirmed |
 | F-009: Bad token gives raw HTTPError with no credential context | Expected | Confirmed |
 | F-010: Bearer auth requires meaningless `key` field | Unexpected | New |
 
@@ -178,9 +178,9 @@ See pipeline.yml in this directory.
 
 1. **F-006:** Add a "Credentials" section to `new-pipeline` skill. Before step 2 (probe API), guide user through: identify what auth the API needs → create token with correct scope → store in env var or `project.yml` using `{{ env.VAR }}` syntax.
 
-2. **F-007:** Generalize `pvc init` to accept arbitrary key-value credential pairs. Add a `--add-key KEY` prompt or simply prompt for key-value pairs until the user is done, in addition to the Portland Maps fields.
+2. **F-007:** Generalize `ddt init` to accept arbitrary key-value credential pairs. Add a `--add-key KEY` prompt or simply prompt for key-value pairs until the user is done, in addition to the Portland Maps fields.
 
-3. **F-008:** In `pvc validate`, optionally attempt env var resolution and warn (not error) when a referenced variable is not set: `⚠ 'GITHUB_TOKEN' is not set — set it before running`.
+3. **F-008:** In `ddt validate`, optionally attempt env var resolution and warn (not error) when a referenced variable is not set: `⚠ 'GITHUB_TOKEN' is not set — set it before running`.
 
 4. **F-009:** In `runner.py`, catch `requests.HTTPError` specifically and emit a friendlier message: `    auth error: 401 Unauthorized — check that your GITHUB_TOKEN is valid and has the required scope`.
 

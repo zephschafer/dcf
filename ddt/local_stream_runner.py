@@ -1,7 +1,7 @@
 """Local streaming runner: consumes from a Kafka topic, applies schema projection,
 and writes windowed Parquet files to a local warehouse directory.
 
-Runs inside a Docker container started by `pvc deploy` (local mode). No Beam,
+Runs inside a Docker container started by `ddt deploy` (local mode). No Beam,
 no GCP dependencies — only kafka-python and pyarrow.
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from pvc.gcp._pipeline_utils import load_columns, to_pyarrow_schema, project_message
+from ddt.gcp._pipeline_utils import load_columns, to_pyarrow_schema, project_message
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def run() -> None:
         bootstrap_servers=args.bootstrap_servers,
         value_deserializer=lambda m: m,
         auto_offset_reset="earliest",
-        group_id=f"pvc-{args.pipeline_name}",
+        group_id=f"ddt-{args.pipeline_name}",
         consumer_timeout_ms=-1,  # block indefinitely
     )
 

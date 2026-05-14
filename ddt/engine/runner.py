@@ -20,8 +20,8 @@ def run_pipeline(
     if catalog == "gcp":
         spark = None
     else:
-        from pvc.spark_session import get_spark
-        spark = get_spark("pvc")
+        from ddt.spark_session import get_spark
+        spark = get_spark("ddt")
 
     param_defs = {p.name: p for p in pipeline.source.params}
     request_sequence = build_request_sequence(pipeline.source.iterate, param_defs)
@@ -32,7 +32,7 @@ def run_pipeline(
     # Static params declared in the YAML (value is set) flow through to Python sources
     static_params = {p.name: p.value for p in pipeline.source.params if p.value is not None}
 
-    print(f"\n[pvc] Running '{pipeline.name}' — {len(request_sequence)} requests\n")
+    print(f"\n[ddt] Running '{pipeline.name}' — {len(request_sequence)} requests\n")
 
     failed = 0
 
@@ -75,11 +75,11 @@ def run_pipeline(
 
     total = len(request_sequence)
     if failed == total:
-        print(f"\n[pvc] '{pipeline.name}' FAILED — all {total} iteration(s) errored → {dest}\n")
+        print(f"\n[ddt] '{pipeline.name}' FAILED — all {total} iteration(s) errored → {dest}\n")
     elif failed:
-        print(f"\n[pvc] '{pipeline.name}' complete with errors — {failed}/{total} iteration(s) failed → {dest}\n")
+        print(f"\n[ddt] '{pipeline.name}' complete with errors — {failed}/{total} iteration(s) failed → {dest}\n")
     else:
-        print(f"\n[pvc] '{pipeline.name}' complete → {dest}\n")
+        print(f"\n[ddt] '{pipeline.name}' complete → {dest}\n")
 
     if spark is not None:
         spark.stop()

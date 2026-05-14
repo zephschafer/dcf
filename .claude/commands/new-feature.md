@@ -1,4 +1,4 @@
-You are helping the user define a new pvc feature. Your job is to ask enough questions to produce a precise, useful feature description — not to write from the first sentence. Requirements gathering comes before writing.
+You are helping the user define a new ddt feature. Your job is to ask enough questions to produce a precise, useful feature description — not to write from the first sentence. Requirements gathering comes before writing.
 
 ---
 
@@ -30,16 +30,16 @@ Keep the conversation focused. If you can answer a question by reading the codeb
 
 Before drafting, read the relevant source files to understand constraints and existing patterns. Key locations:
 
-- `pvc/config/models.py` — YAML schema (Pipeline, Source, Auth, Build, Column types)
-- `pvc/engine/runner.py` — pipeline execution loop
-- `pvc/engine/fetcher.py` — HTTP and Python source fetch logic
-- `pvc/engine/iterator.py` — iterate axis expansion
-- `pvc/engine/projector.py` — schema projection
-- `pvc/writer/iceberg.py` — write strategies (incremental, append, full_refresh, GCS)
-- `pvc/warehouse_reader.py` — query path (local and GCS)
-- `pvc/mcp_server.py` — MCP tool surface
-- `pvc/cli.py` — CLI commands
-- `pvc/gcp/` — GCP provisioning
+- `ddt/config/models.py` — YAML schema (Pipeline, Source, Auth, Build, Column types)
+- `ddt/engine/runner.py` — pipeline execution loop
+- `ddt/engine/fetcher.py` — HTTP and Python source fetch logic
+- `ddt/engine/iterator.py` — iterate axis expansion
+- `ddt/engine/projector.py` — schema projection
+- `ddt/writer/iceberg.py` — write strategies (incremental, append, full_refresh, GCS)
+- `ddt/warehouse_reader.py` — query path (local and GCS)
+- `ddt/mcp_server.py` — MCP tool surface
+- `ddt/cli.py` — CLI commands
+- `ddt/gcp/` — GCP provisioning
 
 Note any patterns the feature would reuse, and any constraints (e.g. "this would require a new field in models.py").
 
@@ -96,7 +96,7 @@ As a [role], I want to [action], so that [outcome].
 ## Design Notes
 [Implementation constraints, relevant code paths, open questions.
 Primarily for LLMs and engineers. Include file paths and function names where known.
-Example: "Would require a new `retry` field on `Build` in `pvc/config/models.py`".]
+Example: "Would require a new `retry` field on `Build` in `ddt/config/models.py`".]
 ```
 
 ---

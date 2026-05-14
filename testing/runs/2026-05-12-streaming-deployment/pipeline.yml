@@ -4,7 +4,7 @@ description: Clickstream events from the product UI
 
 source:
   type: pubsub
-  subscription: projects/quipu-data-generator/subscriptions/pvc-test-clicks-sub
+  subscription: projects/quipu-data-generator/subscriptions/ddt-test-clicks-sub
 
 schema:
   columns:

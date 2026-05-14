@@ -1,6 +1,6 @@
-# pvc Features
+# ddt Features
 
-This directory contains feature descriptions for pvc. Each file defines one feature: what it does, why it exists, and what "done" looks like.
+This directory contains feature descriptions for ddt. Each file defines one feature: what it does, why it exists, and what "done" looks like.
 
 ## Who reads these
 

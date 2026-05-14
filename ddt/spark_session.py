@@ -29,7 +29,7 @@ def _suppress_spark_startup_noise():
         os.close(saved_fd)
 
 
-def get_spark(app_name="pvc"):
+def get_spark(app_name="ddt"):
     from .project import find_project_root
     warehouse_path = find_project_root() / "warehouse"
 

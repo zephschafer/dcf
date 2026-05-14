@@ -67,8 +67,8 @@ Start with a single project to validate basic Jira field extraction:
    status (fields.status.name), assignee (fields.assignee.displayName, nullable),
    priority (fields.priority.name, nullable), issue_type (fields.issuetype.name),
    labels (array_join of fields.labels), created (fields.created), updated (fields.updated)
-4. Run `pvc validate jira_issues`
-5. Run `pvc run jira_issues --limit 1` — one project × one date window
+4. Run `ddt validate jira_issues`
+5. Run `ddt run jira_issues --limit 1` — one project × one date window
 6. Verify: `fields.status.name` extracted correctly (3 levels deep via dot-notation)
 7. Verify: `fields.assignee.displayName` is nullable when unassigned
 
@@ -80,7 +80,7 @@ Expand to multiple projects using the `categorical` iterate axis:
 
 1. Update pipeline: `categorical` iterate axis over 2-3 project keys
 2. Combine with the `date_range` axis — verify cartesian product (N projects × M windows)
-3. Run `pvc run jira_issues --limit 1` — should run first project × first date window
+3. Run `ddt run jira_issues --limit 1` — should run first project × first date window
 4. Run full pipeline
 5. Verify row counts: run twice, confirm idempotent on `id` primary key
 6. Query warehouse: count issues per project, per status
@@ -89,10 +89,10 @@ Phase 2 success: categorical × date_range cartesian product works correctly.
 
 ### Phase 3 — Pagination Characterization
 
-Jira uses offset pagination (`startAt`/`total`). Test pvc's behavior:
+Jira uses offset pagination (`startAt`/`total`). Test ddt's behavior:
 
 1. Find a project + date range with >100 issues (`total > maxResults` in response)
-2. Run the pipeline — how many rows does pvc return? Is it capped at 100?
+2. Run the pipeline — how many rows does ddt return? Is it capped at 100?
 3. Document: offset pagination limitation (same root cause as Link header pagination)
 
 Phase 3 success: limitation documented with exact counts.
@@ -112,29 +112,29 @@ Phase 3 success: limitation documented with exact counts.
 ## Known Complexity
 
 - **JQL date syntax:** Jira's JQL uses `"YYYY-MM-DD"` string format (not ISO 8601 with time).
-  Confirm pvc's `date_range` iterate axis can format params as `YYYY-MM-DD`.
+  Confirm ddt's `date_range` iterate axis can format params as `YYYY-MM-DD`.
 - **Deeply nested fields:** `fields.status.name`, `fields.assignee.displayName`,
   `fields.priority.name` are all 3 levels deep. This is the deepest nesting tested so far.
 - **Null objects:** `assignee` can be null (not just `displayName` being null — the entire
-  `assignee` object is null for unassigned issues). pvc's dot-path extractor must handle
+  `assignee` object is null for unassigned issues). ddt's dot-path extractor must handle
   null intermediate objects gracefully.
 - **Offset pagination:** Different mechanism from Link headers but same Blocking limitation.
   `startAt` must be incremented by `maxResults` each request — cannot be expressed in YAML.
 - **Timestamp format:** Jira timestamps include timezone offset (`+0000`) not `Z`. Confirm
-  pvc's `timestamp` type handles both formats.
+  ddt's `timestamp` type handles both formats.
 - **`issue_id` as string:** Jira's `id` field is a string ("10001"), not an integer.
   Use `type: string` for the primary key.
 
 ## Known Expected Findings (Pre-identified)
 
 - **Expected Blocking (Schema):** Offset pagination (`startAt`/`total`) cannot be
-  expressed in pvc YAML — same root cause as Link header pagination.
-- **To investigate:** Does pvc's `date_range` iterate axis format support `YYYY-MM-DD`
+  expressed in ddt YAML — same root cause as Link header pagination.
+- **To investigate:** Does ddt's `date_range` iterate axis format support `YYYY-MM-DD`
   for JQL params, or only ISO 8601 with time component?
 - **To investigate:** Null intermediate objects — if `assignee` is null, does
   `fields.assignee.displayName` return None or raise an error?
 - **Enhancement:** `categorical` axis requires hardcoding project keys in YAML.
-  A real Fivetran Jira connector would discover all projects dynamically. pvc cannot
+  A real Fivetran Jira connector would discover all projects dynamically. ddt cannot
   do this — would require a Python connector.
 
 ## Credentials Required
@@ -149,7 +149,7 @@ Store as env vars:
 
 Auth header: `Authorization: Basic <base64("email:token")>`
 
-In pvc YAML:
+In ddt YAML:
 ```yaml
 auth:
   type: header

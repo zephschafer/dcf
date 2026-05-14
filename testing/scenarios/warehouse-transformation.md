@@ -2,18 +2,18 @@
 
 ## Goal
 
-Test whether pvc + Claude can replace dbt — i.e., after ingesting data via pvc
+Test whether ddt + Claude can replace dbt — i.e., after ingesting data via ddt
 pipelines, can Claude build analytical models (joins, aggregations, CTEs) on top
-of the pvc warehouse, and can those models be persisted as new tables?
+of the ddt warehouse, and can those models be persisted as new tables?
 
-**How pvc's warehouse works:** pvc writes Parquet files to `warehouse/<namespace>/<table>/data/`.
+**How ddt's warehouse works:** ddt writes Parquet files to `warehouse/<namespace>/<table>/data/`.
 The MCP `query_warehouse` tool runs ad-hoc DuckDB against these files using
 `read_parquet()` globs. There is no persistent `.db` file. Each query is ephemeral.
 
 **The core questions:**
-1. Can Claude write useful multi-table SQL models against pvc Parquet data via MCP?
+1. Can Claude write useful multi-table SQL models against ddt Parquet data via MCP?
 2. Can query results be written back as a new warehouse table (materialized model)?
-3. If not, what is missing to make pvc + Claude a true dbt replacement?
+3. If not, what is missing to make ddt + Claude a true dbt replacement?
 
 ## Target Data
 
@@ -41,7 +41,7 @@ Phase 1 success: document what the MCP tools can and cannot discover autonomousl
 
 ### Phase 2 — Multi-Table Analytical Query
 
-Build a useful analytical model joining two pvc warehouse tables:
+Build a useful analytical model joining two ddt warehouse tables:
 
 Goal: "Top 10 repositories by commit count in the last 90 days, with their primary
 language and star count"
@@ -118,12 +118,12 @@ and document the recommended pattern if it is, or the gap if it isn't.
   building a persistent analytics layer.
 - **Expected MCP gap:** No table discovery tool — Claude cannot autonomously know
   what tables exist without being told or reading the filesystem.
-- **To investigate:** Is the intended dbt-replacement pattern to build a pvc pipeline
+- **To investigate:** Is the intended dbt-replacement pattern to build a ddt pipeline
   (type: python) that reads from the warehouse with DuckDB and writes a transformed
   result back? If so, this should be documented and the skill should guide users to it.
 - **Enhancement:** A `materialize_model` MCP tool (takes a SQL string, writes result
   to `warehouse/<namespace>/<model_name>/data/`) would close the dbt gap and make
-  pvc a true ELT stack rather than just EL.
+  ddt a true ELT stack rather than just EL.
 
 ## Credentials Required
 
@@ -141,7 +141,7 @@ None — uses data already in the local warehouse from prior rounds.
   (two tables) for the join test instead.
 - The warehouse is at `warehouse/` relative to the quipu project root.
   DuckDB glob for github_repos: `warehouse/github/github_repos/data/*.parquet`
-- For Phase 3, look at `pvc/mcp_server.py` to understand what the `query_warehouse`
+- For Phase 3, look at `ddt/mcp_server.py` to understand what the `query_warehouse`
   tool does under the hood — can it be coaxed into write mode, or is read-only hardcoded?
 - If model persistence via MCP is not possible, the proposed fix should be specific:
   name the new MCP tool, describe its parameters, and explain how it would differ

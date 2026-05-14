@@ -3,7 +3,7 @@
 ## Goal
 
 Build a pipeline that incrementally ingests commits from a high-volume GitHub
-repository using pvc's `date_range` iterate axis. This scenario validates the
+repository using ddt's `date_range` iterate axis. This scenario validates the
 incremental sync pattern end-to-end at real scale — the core of Fivetran's value
 proposition ("sync everything since last run, don't re-fetch what you have").
 
@@ -57,8 +57,8 @@ Validate the `date_range` iterate axis with a narrow window that fits on one pag
    - `start: "2024-01-01"`, `end: "2024-01-31"`, `step: "7 days"`, `window: "7 days"`
    - Schema: sha, commit_message (from commit.message), author_name (commit.author.name),
      author_date (commit.author.date), github_login (author.login, nullable), html_url
-2. Run `pvc validate github_commits` — confirm validation passes
-3. Run `pvc run github_commits --limit 1` — first iteration (Jan 1–7)
+2. Run `ddt validate github_commits` — confirm validation passes
+3. Run `ddt run github_commits --limit 1` — first iteration (Jan 1–7)
 4. Verify: sha is present, commit_message is a string, author_date parses as timestamp,
    github_login is nullable (some commits don't have a matching GitHub user)
 5. Run full pipeline (all 4 weekly windows in January 2024)
@@ -114,7 +114,7 @@ Phase 2 success: deduplication holds at scale, performance is acceptable for a
   If so, is there a way to batch more rows per Spark write (currently writes once
   per request iteration)?
 - **To investigate:** Does null propagation work for `author.login` when `author`
-  (the parent object) is null? pvc's dot-path extractor may fail with an AttributeError
+  (the parent object) is null? ddt's dot-path extractor may fail with an AttributeError
   or silently return None — need to confirm which.
 
 ## Credentials Required
@@ -137,8 +137,8 @@ at weekly windows, unauthenticated would likely hit rate limits.
   that won't grow (unlike current-month windows). Row count will be reproducible.
 - When testing nullable `author.login`, look for commits by bot accounts or external
   contributors — these are most likely to have null GitHub user objects
-- For the scale test, record the wall-clock time from `[pvc] Running...` to
-  `[pvc] complete →`. This establishes a baseline for future performance comparisons.
+- For the scale test, record the wall-clock time from `[ddt] Running...` to
+  `[ddt] complete →`. This establishes a baseline for future performance comparisons.
 - If Spark startup overhead is significant relative to data volume, note it — this
   may inform a future optimization finding (e.g., batch multiple windows into one
   Spark write).

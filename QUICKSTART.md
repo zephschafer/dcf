@@ -1,4 +1,4 @@
-# pvc Quickstart
+# ddt Quickstart
 
 This guide walks you from zero to a working data pipeline. The example ingests your private GitHub repositories — it covers credentials, schema projection, and warehouse querying in a single concrete run.
 
@@ -14,7 +14,7 @@ This guide walks you from zero to a working data pipeline. The example ingests y
 
 ## 1. Create a project
 
-pvc is a tool you depend on, not a repo you clone. Create a fresh directory:
+ddt is a tool you depend on, not a repo you clone. Create a fresh directory:
 
 ```bash
 mkdir my-data && cd my-data
@@ -27,13 +27,13 @@ mkdir my-data && cd my-data
 name = "my-data"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["pvc"]
+dependencies = ["ddt"]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
-pvc = { git = "https://github.com/zephschafer/pvc.git" }
+ddt = { git = "https://github.com/zephschafer/ddt.git" }
 ```
 
 **`project.yml`** (gitignore this file — it holds your credentials):
@@ -60,7 +60,7 @@ uv sync
 
 ## 2. Store your credentials
 
-pvc resolves `{{ env.VAR }}` placeholders in pipeline YAML from two places, in order:
+ddt resolves `{{ env.VAR }}` placeholders in pipeline YAML from two places, in order:
 
 1. OS environment variable (`export GITHUB_TOKEN=...`)
 2. `project.yml` key (lowercased, e.g. `github_token: ...`)
@@ -152,14 +152,14 @@ A few things to notice:
 - **`auth.key: token`** — bearer auth doesn't use the key field, but the schema requires it. Use any placeholder.
 - **`{{ env.GITHUB_TOKEN }}`** — resolved from `project.yml` or your shell environment at run time.
 - **`build.strategy: incremental`** — upserts on `id` each run, so re-running the same pipeline never creates duplicates.
-- **`type: boolean`** — pvc casts GitHub's JSON `true`/`false` to a native Python bool. Similarly, `timestamp` parses ISO 8601 strings with timezone info.
+- **`type: boolean`** — ddt casts GitHub's JSON `true`/`false` to a native Python bool. Similarly, `timestamp` parses ISO 8601 strings with timezone info.
 
 ---
 
 ## 4. Validate
 
 ```bash
-uv run pvc validate github_repos
+uv run ddt validate github_repos
 ```
 
 ```
@@ -173,16 +173,16 @@ OK — 'github_repos' (2 params, 0 iterate axes, 12 columns)
 ## 5. Test with one iteration
 
 ```bash
-uv run pvc run github_repos --limit 1
+uv run ddt run github_repos --limit 1
 ```
 
 ```
-[pvc] Running 'github_repos' — 1 requests
+[ddt] Running 'github_repos' — 1 requests
 
   [1/1]
     12 rows → writing
 
-[pvc] 'github_repos' complete → /your/project/warehouse/github/github_repos/data
+[ddt] 'github_repos' complete → /your/project/warehouse/github/github_repos/data
 ```
 
 The `--limit 1` flag restricts to the first iteration (useful when your pipeline iterates over many date ranges or categories). For a single-request pipeline like this one, it behaves identically to a full run.
@@ -215,7 +215,7 @@ df = conn.execute("""
 print(df)
 ```
 
-Or if you have the MCP server running, use `query_warehouse` and pvc rewrites the table path for you:
+Or if you have the MCP server running, use `query_warehouse` and ddt rewrites the table path for you:
 
 ```sql
 SELECT name, language FROM github.github_repos ORDER BY name
@@ -226,10 +226,10 @@ SELECT name, language FROM github.github_repos ORDER BY name
 ## 7. Run fully and verify deduplication
 
 ```bash
-uv run pvc run github_repos
+uv run ddt run github_repos
 ```
 
-Re-run it a second time. For `incremental` pipelines, the row count must stay the same — pvc upserts on `primary_key`, so repeated runs are idempotent:
+Re-run it a second time. For `incremental` pipelines, the row count must stay the same — ddt upserts on `primary_key`, so repeated runs are idempotent:
 
 ```python
 conn.execute("SELECT COUNT(*) FROM read_parquet('warehouse/github/github_repos/data/*.parquet')").fetchone()
@@ -244,7 +244,7 @@ conn.execute("SELECT COUNT(*) FROM read_parquet('warehouse/github/github_repos/d
 - **Project nested fields** — use dot-notation paths like `owner.login` to extract values from nested objects.
 - **Project array fields** — use the `array_join` transform to flatten list fields like `topics` into a comma-separated string.
 - **Add a Python connector** — for APIs that need pagination, multi-step auth, or response reshaping, write a `connectors/` function and use `type: python`.
-- **Ship to the cloud** — run `pvc gcp setup` to provision a GCS-backed Iceberg lake and set `catalog: gcp` in `project.yml`.
-- **Use Claude to build pipelines** — run `pvc mcp setup-desktop` to register the MCP server with Claude Desktop. Claude can then write, validate, and run pipelines on your behalf using the `new-pipeline` skill.
+- **Ship to the cloud** — run `ddt gcp setup` to provision a GCS-backed Iceberg lake and set `catalog: gcp` in `project.yml`.
+- **Use Claude to build pipelines** — run `ddt mcp setup-desktop` to register the MCP server with Claude Desktop. Claude can then write, validate, and run pipelines on your behalf using the `new-pipeline` skill.
 
 See [README.md](README.md) for the full YAML schema reference and CLI documentation.

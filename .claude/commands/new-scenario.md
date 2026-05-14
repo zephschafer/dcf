@@ -1,4 +1,4 @@
-You are helping the user create a new pvc test scenario. A scenario is a structured markdown file in `testing/scenarios/` that drives a `test-pipeline` run. Your job is to produce a precise, actionable scenario that a future test agent can execute without ambiguity.
+You are helping the user create a new ddt test scenario. A scenario is a structured markdown file in `testing/scenarios/` that drives a `test-pipeline` run. Your job is to produce a precise, actionable scenario that a future test agent can execute without ambiguity.
 
 ## Arguments
 
@@ -23,7 +23,7 @@ Also read one existing scenario for format reference — `testing/scenarios/pyth
 Before writing, confirm what you still need to know. Adapt based on what context you already have from the feature file. Key questions to cover:
 
 - **What is the single core question this scenario answers?** (e.g. "Does incremental retry work when a fetch throws a transient error?")
-- **What is the target API or system component?** Existing pipeline (name it), a new API, or an internal pvc component (runner, writer, reader)?
+- **What is the target API or system component?** Existing pipeline (name it), a new API, or an internal ddt component (runner, writer, reader)?
 - **Should this be one scenario or several?** A scenario is best when it has a clear happy path and 1–3 error/edge cases. Multiple distinct behaviors should be separate scenario files.
 - **What credentials are required?** (Which keys from `testing/test_config.yml.example`)
 - **Are there any pre-identified failure modes** that the scenario should explicitly watch for?
