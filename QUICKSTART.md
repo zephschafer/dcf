@@ -1,6 +1,6 @@
 # ddt Quickstart
 
-This guide walks you from zero to a working data pipeline. The example ingests your private GitHub repositories — it covers credentials, schema projection, and warehouse querying in a single concrete run.
+This guide walks you from zero to a working data pipeline. The example ingests commits to the ddt repository — no credentials needed, since the repo is public.
 
 ---
 
@@ -36,7 +36,7 @@ package = false
 ddt = { git = "https://github.com/zephschafer/ddt.git" }
 ```
 
-**`project.yml`** (gitignore this file — it holds your credentials):
+**`project.yml`:**
 
 ```yaml
 catalog: local
@@ -58,99 +58,55 @@ uv sync
 
 ---
 
-## 2. Store your credentials
+## 2. Write a pipeline
 
-ddt resolves `{{ env.VAR }}` placeholders in pipeline YAML from two places, in order:
-
-1. OS environment variable (`export GITHUB_TOKEN=...`)
-2. `project.yml` key (lowercased, e.g. `github_token: ...`)
-
-For credentials you want to persist across shell sessions, add them to `project.yml`:
+Create `pipelines/ddt_commits.yml`:
 
 ```yaml
-catalog: local
-github_token: ghp_xxxxxxxxxxxx
-```
-
-> `project.yml` is gitignored and never committed. It is the right place for API keys.
-
----
-
-## 3. Write a pipeline
-
-Create `pipelines/github_repos.yml`:
-
-```yaml
-name: github_repos
+name: ddt_commits
 namespace: github
-description: My private GitHub repositories
+description: Commits to the ddt repository.
 
 source:
   type: http
-  url: https://api.github.com/user/repos
+  url: https://api.github.com/repos/zephschafer/ddt/commits
   method: GET
-  auth:
-    type: bearer
-    key: token       # required by the schema; not used in the request itself
-    value: "{{ env.GITHUB_TOKEN }}"
   params:
-    - name: visibility
+    - name: sha
       type: string
-      value: private
+      value: main
     - name: per_page
       type: integer
       value: 100
   schema:
     columns:
-      - name: id
-        path: id
-        type: integer
-      - name: name
-        path: name
+      - name: sha
+        path: sha
         type: string
-      - name: full_name
-        path: full_name
+      - name: author
+        path: commit.author.name
         type: string
-      - name: private
-        path: private
-        type: boolean
-      - name: description
-        path: description
+      - name: email
+        path: commit.author.email
         type: string
-      - name: language
-        path: language
+      - name: message
+        path: commit.message
         type: string
-      - name: stargazers_count
-        path: stargazers_count
-        type: integer
-      - name: forks_count
-        path: forks_count
-        type: integer
-      - name: created_at
-        path: created_at
+      - name: committed_at
+        path: commit.author.date
         type: timestamp
-      - name: updated_at
-        path: updated_at
-        type: timestamp
-      - name: default_branch
-        path: default_branch
-        type: string
-      - name: visibility
-        path: visibility
-        type: string
 
 cadence:
   strategy: incremental
-  primary_key: id
+  primary_key: sha
 ```
 
 A few things to notice:
 
-- **`namespace: github`** — groups the table under `warehouse/github/`. Without this, the table lands under `warehouse/github_repos/`.
-- **`auth.key: token`** — bearer auth doesn't use the key field, but the schema requires it. Use any placeholder.
-- **`{{ env.GITHUB_TOKEN }}`** — resolved from `project.yml` or your shell environment at run time.
-- **`cadence.strategy: incremental`** — upserts on `id` each run, so re-running the same pipeline never creates duplicates.
-- **`type: boolean`** — ddt casts GitHub's JSON `true`/`false` to a native Python bool. Similarly, `timestamp` parses ISO 8601 strings with timezone info.
+- **`namespace: github`** — groups the table under `warehouse/github/`. Without this, the table lands under `warehouse/ddt_commits/`.
+- **`commit.author.name`** — dot-notation paths extract values from nested objects in the JSON response.
+- **`cadence.strategy: incremental`** — upserts on `sha` each run, so re-running the same pipeline never creates duplicates.
+- **`type: timestamp`** — ddt parses ISO 8601 strings with timezone info into native timestamps.
 
 ### What this produces
 
@@ -163,28 +119,25 @@ A few things to notice:
 ```yaml
 source:
   type: http
-  url: https://api.github.com/user/repos
-  auth:
-    type: bearer
-    value: "{{ env.GITHUB_TOKEN }}"
+  url: https://api.github.com/repos/zephschafer/ddt/commits
   params:
-    - name: visibility
-      value: private
+    - name: sha
+      value: main
     - name: per_page
       value: 100
   schema:
     columns:
-      - name: id
-        path: id
-        type: integer
-      - name: name
-        path: name
+      - name: sha
+        path: sha
         type: string
-      # 10 more columns ...
+      - name: author
+        path: commit.author.name
+        type: string
+      # 3 more columns ...
 
 cadence:
   strategy: incremental
-  primary_key: id
+  primary_key: sha
 ```
 
 </td>
@@ -193,35 +146,34 @@ cadence:
 **assembled request** _(1 request per run)_
 
 ```
-GET https://api.github.com/user/repos
-    ?visibility=private
+GET https://api.github.com/repos/zephschafer/ddt/commits
+    ?sha=main
     &per_page=100
-Authorization: Bearer ghp_xxxx...
 ```
 
 **response**
 
 ```json
 [
-  {"id": 12345, "name": "my-data", "language": "Python", ...},
-  {"id": 67890, "name": "my-api",  "language": "Go",     ...}
+  {"sha": "6172fb8", "commit": {"author": {"name": "Zeph", "date": "2026-05-14T..."}}, ...},
+  {"sha": "3266e84", "commit": {"author": {"name": "Zeph", "date": "2026-05-12T..."}}, ...}
 ]
 ```
 
-**projected → warehouse** (`incremental` on `id`)
+**projected → warehouse** (`incremental` on `sha`)
 
 ```
-id       name      language   ...  (12 columns)
-──────── ───────── ──────────
-12345    my-data   Python
-67890    my-api    Go
+sha        author   committed_at   ...  (5 columns)
+────────── ──────── ──────────────
+6172fb8    Zeph     2026-05-14
+3266e84    Zeph     2026-05-12
 ```
 
-**cadence** — runs once per `ddt run`, upserts on `id`
+**cadence** — runs once per `ddt run`, upserts on `sha`
 
 ```
-ddt run github_repos
-  → warehouse/github/github_repos/data/
+ddt run ddt_commits
+  → warehouse/github/ddt_commits/data/
 ```
 
 </td>
@@ -230,50 +182,38 @@ ddt run github_repos
 
 ---
 
-## 4. Validate
+## 3. Validate
 
 ```bash
-uv run ddt validate github_repos
+uv run ddt validate ddt_commits
 ```
 
 ```
-OK — 'github_repos' (2 params, 0 cadence axes, 12 columns)
+OK — 'ddt_commits' (2 params, 0 cadence axes, 5 columns)
 ```
-
-> **Note:** validate does not check whether your credentials are set. That check happens at run time.
 
 ---
 
-## 5. Test with one iteration
+## 4. Test with one iteration
 
 ```bash
-uv run ddt run github_repos --limit 1
+uv run ddt run ddt_commits --limit 1
 ```
 
 ```
-[ddt] Running 'github_repos' — 1 requests
+[ddt] Running 'ddt_commits' — 1 requests
 
   [1/1]
-    12 rows → writing
+    30 rows → writing
 
-[ddt] 'github_repos' complete → /your/project/warehouse/github/github_repos/data
+[ddt] 'ddt_commits' complete → /your/project/warehouse/github/ddt_commits/data
 ```
 
 The `--limit 1` flag restricts to the first iteration (useful when your pipeline iterates over many date ranges or categories). For a single-request pipeline like this one, it behaves identically to a full run.
 
-If your token is missing or wrong, you will see:
-
-```
-# Missing token:
-OSError: 'GITHUB_TOKEN' is not set — add it as an environment variable or set 'github_token' in project.yml
-
-# Wrong token:
-fetch error: 401 Client Error: Unauthorized for url: https://api.github.com/user/repos?...
-```
-
 ---
 
-## 6. Query the warehouse
+## 5. Query the warehouse
 
 Data is written as Parquet files and is immediately queryable with DuckDB (no JVM startup):
 
@@ -282,9 +222,9 @@ import duckdb
 
 conn = duckdb.connect()
 df = conn.execute("""
-    SELECT name, language, visibility, private
-    FROM read_parquet('warehouse/github/github_repos/data/*.parquet')
-    ORDER BY name
+    SELECT sha, author, message, committed_at
+    FROM read_parquet('warehouse/github/ddt_commits/data/*.parquet')
+    ORDER BY committed_at DESC
 """).fetchdf()
 print(df)
 ```
@@ -292,22 +232,22 @@ print(df)
 Or if you have the MCP server running, use `query_warehouse` and ddt rewrites the table path for you:
 
 ```sql
-SELECT name, language FROM github.github_repos ORDER BY name
+SELECT sha, author, message FROM github.ddt_commits ORDER BY committed_at DESC
 ```
 
 ---
 
-## 7. Run fully and verify deduplication
+## 6. Run fully and verify deduplication
 
 ```bash
-uv run ddt run github_repos
+uv run ddt run ddt_commits
 ```
 
 Re-run it a second time. For `incremental` pipelines, the row count must stay the same — ddt upserts on `primary_key`, so repeated runs are idempotent:
 
 ```python
-conn.execute("SELECT COUNT(*) FROM read_parquet('warehouse/github/github_repos/data/*.parquet')").fetchone()
-# (12,) — same count every time
+conn.execute("SELECT COUNT(*) FROM read_parquet('warehouse/github/ddt_commits/data/*.parquet')").fetchone()
+# (30,) — same count every time
 ```
 
 ---
@@ -315,9 +255,10 @@ conn.execute("SELECT COUNT(*) FROM read_parquet('warehouse/github/github_repos/d
 ## What's next
 
 - **Iterate over date ranges** — add a `date_range` axis to `cadence.iterate` to pull data window by window. Useful for APIs that filter by date (commits, events, logs).
-- **Project nested fields** — use dot-notation paths like `owner.login` to extract values from nested objects.
+- **Project nested fields** — use dot-notation paths like `commit.author.name` to extract values from nested objects.
 - **Project array fields** — use the `array_join` transform to flatten list fields like `topics` into a comma-separated string.
 - **Add a Python connector** — for APIs that need pagination, multi-step auth, or response reshaping, write a `connectors/` function and use `type: python`.
+- **Pipelines that require credentials** — see [docs/authenticated-pipeline.md](docs/authenticated-pipeline.md) for how to configure bearer auth and store API keys safely.
 - **Ship to the cloud** — run `ddt gcp setup` to provision a GCS-backed Iceberg lake and set `catalog: gcp` in `project.yml`.
 - **Use Claude to build pipelines** — run `ddt mcp setup-desktop` to register the MCP server with Claude Desktop. Claude can then write, validate, and run pipelines on your behalf using the `new-pipeline` skill.
 

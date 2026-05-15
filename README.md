@@ -70,46 +70,47 @@ uv sync
 
 ### 2. Write a pipeline
 
-Create `pipelines/github_repos.yml`:
+Create `pipelines/ddt_commits.yml`:
 
 ```yaml
-name: github_repos
+name: ddt_commits
+namespace: github
+description: Commits to the ddt repository.
 
 source:
   type: http
-  url: https://api.github.com/user/repos
-  auth:
-    type: bearer
-    key: token
-    value: "{{ env.GH_PAT }}"
+  url: https://api.github.com/repos/zephschafer/ddt/commits
+  method: GET
   params:
+    - name: sha
+      type: string
+      value: main
     - name: per_page
       type: integer
       value: 100
   schema:
     columns:
-      - {name: id,               path: id,               type: integer}
-      - {name: name,             path: name,             type: string}
-      - {name: full_name,        path: full_name,        type: string}
-      - {name: stargazers_count, path: stargazers_count, type: integer}
-      - {name: updated_at,       path: updated_at,       type: timestamp}
+      - {name: sha,          path: sha,                type: string}
+      - {name: author,       path: commit.author.name, type: string}
+      - {name: message,      path: commit.message,     type: string}
+      - {name: committed_at, path: commit.author.date, type: timestamp}
 
 cadence:
   strategy: incremental
-  primary_key: id
+  primary_key: sha
 
 deployment:
   schedule: "0 8 * * *"
 ```
 
-`{{ env.GH_PAT }}` resolves to `gh_pat` from `project.yml` at run time.
+No credentials required — the ddt repo is public.
 
 ---
 
 ### 3. Validate
 
 ```bash
-uv run ddt validate github_repos
+uv run ddt validate ddt_commits
 ```
 
 > Validate checks the YAML structure but does not verify credentials.
@@ -119,26 +120,16 @@ uv run ddt validate github_repos
 ### 4. Run
 
 ```bash
-uv run ddt run github_repos
+uv run ddt run ddt_commits
 ```
 
 ```
-[ddt] Running 'github_repos' — 1 requests
+[ddt] Running 'ddt_commits' — 1 requests
 
   [1/1]
-    42 rows → writing
+    30 rows → writing
 
-[ddt] 'github_repos' complete → /your/project/warehouse/github_repos/data
-```
-
-If your token is missing or wrong:
-
-```
-# Missing token:
-OSError: 'GH_PAT' is not set — add it as an environment variable or set 'gh_pat' in project.yml
-
-# Wrong token:
-fetch error: 401 Client Error: Unauthorized for url: https://api.github.com/user/repos?...
+[ddt] 'ddt_commits' complete → /your/project/warehouse/github/ddt_commits/data
 ```
 
 ---
@@ -152,9 +143,9 @@ import duckdb
 
 conn = duckdb.connect()
 df = conn.execute("""
-    SELECT name, stargazers_count, updated_at
-    FROM read_parquet('warehouse/github_repos/github_repos/data/*.parquet')
-    ORDER BY stargazers_count DESC
+    SELECT sha, author, message, committed_at
+    FROM read_parquet('warehouse/github/ddt_commits/data/*.parquet')
+    ORDER BY committed_at DESC
 """).fetchdf()
 print(df)
 ```
@@ -164,7 +155,7 @@ print(df)
 ### 6. Deploy
 
 ```bash
-uv run ddt deploy github_repos
+uv run ddt deploy ddt_commits
 ```
 
 This schedules the pipeline to run daily at 8 AM UTC, as configured in `deployment.schedule`.
