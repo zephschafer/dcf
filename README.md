@@ -1,33 +1,25 @@
 # ddt
 
-A framework for building data lakes from scatch. 
+Declarative Data Tool
 
 It works like this
 1. User defines pipelines with basic configs in a YAML (like a dbt model)
-2. PVC builds and runs the pipeline
+2. ddt builds and runs the pipeline
 3. Data lake has data
-
----
 
 ## Quickstart 
 
-# pvc Quickstart
-
 This guide walks you from zero to a working data pipeline. The example ingests your private GitHub repositories — it covers credentials, schema projection, and warehouse querying in a single concrete run.
 
----
-
-## Prerequisites
+### Prerequisites
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 - Java (required by PySpark — `java -version` to check)
 
----
+### 1. Create a project
 
-## 1. Create a project
-
-pvc is a tool you depend on, not a repo you clone. Create a fresh directory:
+ddt is a tool you depend on, not a repo you clone. Create a fresh directory:
 
 ```bash
 mkdir my-data && cd my-data
@@ -49,7 +41,7 @@ dependencies = [
 package = false
 
 [tool.uv.sources]
-ddt = { path = "../ddt", editable = true }  # local dev; swap for a version once published
+pvc = { git = "https://github.com/zephschafer/ddt.git" }    
 ```
 
 **`project.yml`** (gitignore this file — it holds your credentials):
@@ -76,7 +68,7 @@ uv run ddt validate all
 
 ---
 
-## 2. Store your credentials
+### 2. Store your credentials
 
 ```bash
 # Run a pipeline
@@ -110,7 +102,7 @@ uv run ddt mcp setup-desktop   # registers ddt in Claude Desktop's config
 
 ---
 
-## 3. Write a pipeline
+### 3. Write a pipeline
 
 Create `pipelines/github_repos.yml`:
 
@@ -227,14 +219,14 @@ A few things to notice:
 - **`auth.key: token`** — bearer auth doesn't use the key field, but the schema requires it. Use any placeholder.
 - **`{{ env.GITHUB_TOKEN }}`** — resolved from `project.yml` or your shell environment at run time.
 - **`build.strategy: incremental`** — upserts on `id` each run, so re-running the same pipeline never creates duplicates.
-- **`type: boolean`** — pvc casts GitHub's JSON `true`/`false` to a native Python bool. Similarly, `timestamp` parses ISO 8601 strings with timezone info.
+- **`type: boolean`** — ddt casts GitHub's JSON `true`/`false` to a native Python bool. Similarly, `timestamp` parses ISO 8601 strings with timezone info.
 
 ---
 
-## 4. Validate
+### 4. Validate
 
 ```bash
-uv run pvc validate github_repos
+uv run ddt validate github_repos
 ```
 
 **With Spark:**
@@ -251,19 +243,19 @@ spark.sql("SELECT neighborhood, COUNT(*) FROM local.craigslist_apts.craigslist_a
 
 ---
 
-## 5. Test with one iteration
+### 5. Test with one iteration
 
 ```bash
-uv run pvc run github_repos --limit 1
+uv run ddt run github_repos --limit 1
 ```
 
 ```
-[pvc] Running 'github_repos' — 1 requests
+[ddt] Running 'github_repos' — 1 requests
 
   [1/1]
     12 rows → writing
 
-[pvc] 'github_repos' complete → /your/project/warehouse/github/github_repos/data
+[ddt] 'github_repos' complete → /your/project/warehouse/github/github_repos/data
 ```
 
 The `--limit 1` flag restricts to the first iteration (useful when your pipeline iterates over many date ranges or categories). For a single-request pipeline like this one, it behaves identically to a full run.
@@ -280,7 +272,7 @@ fetch error: 401 Client Error: Unauthorized for url: https://api.github.com/user
 
 ---
 
-## 6. Query the warehouse
+### 6. Query the warehouse
 
 Data is written as Parquet files and is immediately queryable with DuckDB (no JVM startup):
 
@@ -296,7 +288,7 @@ df = conn.execute("""
 print(df)
 ```
 
-Or if you have the MCP server running, use `query_warehouse` and pvc rewrites the table path for you:
+Or if you have the MCP server running, use `query_warehouse` and ddt rewrites the table path for you:
 
 ---
 
@@ -312,7 +304,7 @@ catalog: local              # local | gcp
 
 ---
 
-## 7. Run fully and verify deduplication
+### 7. Run fully and verify deduplication
 
 ```bash
 gcloud auth application-default login
@@ -320,7 +312,7 @@ uv run ddt gcp setup --project-id my-project --region us-central1
 uv run ddt gcp status
 ```
 
-Re-run it a second time. For `incremental` pipelines, the row count must stay the same — pvc upserts on `primary_key`, so repeated runs are idempotent:
+Re-run it a second time. For `incremental` pipelines, the row count must stay the same — ddt upserts on `primary_key`, so repeated runs are idempotent:
 
 ```python
 conn.execute("SELECT COUNT(*) FROM read_parquet('warehouse/github/github_repos/data/*.parquet')").fetchone()
