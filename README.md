@@ -154,7 +154,7 @@ import duckdb
 conn = duckdb.connect()
 df = conn.execute("""
     SELECT name, stargazers_count, updated_at
-    FROM read_parquet('warehouse/github_repos/data/*.parquet')
+    FROM read_parquet('warehouse/github_repos/github_repos/data/*.parquet')
     ORDER BY stargazers_count DESC
 """).fetchdf()
 print(df)
@@ -169,30 +169,6 @@ uv run ddt deploy github_repos
 ```
 
 This schedules the pipeline to run daily at 8 AM UTC, as configured in `deployment.schedule`.
-
----
-
-## What's next
-
-ddt exposes an MCP server so Claude can build pipelines interactively:
-
-```bash
-# Register with Claude Desktop (run once from your project directory)
-uv run ddt mcp setup-desktop
-
-# Or start manually
-uv run ddt mcp serve
-```
-
-**Available tools:** `list_pipelines`, `get_pipeline`, `validate_pipeline`, `run_pipeline`, `list_warehouse_tables`, `query_warehouse`, `write_pipeline`, `write_scraper`.
-
-For cloud deployment:
-
-```bash
-uv run ddt gcp setup --project-id <id> --region us-central1
-uv run ddt gcp status
-uv run ddt gcp teardown   # destroys all GCP resources, resets to catalog: local
-```
 
 ---
 
