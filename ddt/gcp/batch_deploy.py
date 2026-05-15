@@ -19,12 +19,38 @@ import yaml
 logger = logging.getLogger(__name__)
 
 _DDT_PKG_DIR = Path(__file__).parent.parent          # ddt/ package
-_DDT_REPO_ROOT = _DDT_PKG_DIR.parent                 # repo root (contains pyproject.toml)
+_DDT_REPO_ROOT = _DDT_PKG_DIR.parent
 _BATCH_MODULE_DIR = _DDT_PKG_DIR / "infra" / "modules" / "batch_pipeline"
 _BUILD_DIR = Path.home() / ".ddt" / "build"
 _PIPELINE_TF_DIR = Path.home() / ".ddt" / "terraform" / "pipelines"
 _AIRFLOW_TF_DIR = Path.home() / ".ddt" / "terraform" / "airflow" / "gcp"
 _TF_PLUGIN_CACHE = Path.home() / ".ddt" / "terraform" / ".plugin-cache"
+
+
+def _write_pyproject_toml(dest: Path) -> None:
+    repo_pyproject = _DDT_REPO_ROOT / "pyproject.toml"
+    if repo_pyproject.exists():
+        shutil.copy2(repo_pyproject, dest / "pyproject.toml")
+        return
+
+    import importlib.metadata
+
+    meta = importlib.metadata.metadata("ddt")
+    version = meta["Version"]
+    reqs = importlib.metadata.requires("ddt") or []
+    direct_deps = [r for r in reqs if "extra ==" not in r]
+    deps_str = "\n".join(f'    "{r}",' for r in direct_deps)
+    (dest / "pyproject.toml").write_text(
+        f'[project]\n'
+        f'name = "ddt"\n'
+        f'version = "{version}"\n'
+        f'requires-python = ">=3.12"\n'
+        f'dependencies = [\n{deps_str}\n]\n\n'
+        f'[project.scripts]\n'
+        f'ddt = "ddt.cli:app"\n\n'
+        f'[tool.setuptools.packages.find]\n'
+        f'include = ["ddt*"]\n'
+    )
 
 
 # ------------------------------------------------------------------ #
@@ -138,7 +164,7 @@ def _sync_build_context(
     build_context.mkdir(parents=True)
 
     shutil.copytree(_DDT_PKG_DIR, build_context / "ddt")
-    shutil.copy2(_DDT_REPO_ROOT / "pyproject.toml", build_context / "pyproject.toml")
+    _write_pyproject_toml(build_context)
 
     for subdir in ("pipelines", "connectors"):
         src = project_root / subdir

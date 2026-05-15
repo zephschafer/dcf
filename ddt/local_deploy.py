@@ -28,6 +28,38 @@ _DDT_REPO_ROOT = _DDT_PKG_DIR.parent
 
 _BATCH_PIPELINE_MODULE = _DDT_PKG_DIR / "infra" / "modules" / "batch_pipeline"
 
+
+def _write_pyproject_toml(dest: Path) -> None:
+    """Write ddt's pyproject.toml to dest/pyproject.toml.
+
+    Works whether ddt is running from a development checkout or an installed
+    package (where the repo root is not on disk and pyproject.toml lives only
+    in package metadata).
+    """
+    repo_pyproject = _DDT_REPO_ROOT / "pyproject.toml"
+    if repo_pyproject.exists():
+        shutil.copy2(repo_pyproject, dest / "pyproject.toml")
+        return
+
+    import importlib.metadata
+
+    meta = importlib.metadata.metadata("ddt")
+    version = meta["Version"]
+    reqs = importlib.metadata.requires("ddt") or []
+    direct_deps = [r for r in reqs if "extra ==" not in r]
+    deps_str = "\n".join(f'    "{r}",' for r in direct_deps)
+    (dest / "pyproject.toml").write_text(
+        f'[project]\n'
+        f'name = "ddt"\n'
+        f'version = "{version}"\n'
+        f'requires-python = ">=3.12"\n'
+        f'dependencies = [\n{deps_str}\n]\n\n'
+        f'[project.scripts]\n'
+        f'ddt = "ddt.cli:app"\n\n'
+        f'[tool.setuptools.packages.find]\n'
+        f'include = ["ddt*"]\n'
+    )
+
 _BUILD_DIR = Path.home() / ".ddt" / "build"
 _TF_DIR = Path.home() / ".ddt" / "terraform"
 _TF_PLUGIN_CACHE = _TF_DIR / ".plugin-cache"
@@ -178,7 +210,7 @@ def _sync_build_context(project_root: Path, pipeline_name: str) -> Path:
     build_context.mkdir(parents=True)
 
     shutil.copytree(_DDT_PKG_DIR, build_context / "ddt")
-    shutil.copy2(_DDT_REPO_ROOT / "pyproject.toml", build_context / "pyproject.toml")
+    _write_pyproject_toml(build_context)
 
     for subdir in ("pipelines", "connectors"):
         src = project_root / subdir
@@ -565,7 +597,7 @@ def _build_stream_image(project_root: Path, image_tag: str) -> None:
     with tempfile.TemporaryDirectory(prefix="ddt-local-stream-") as tmp:
         tmp_path = Path(tmp)
         shutil.copytree(_DDT_PKG_DIR, tmp_path / "ddt")
-        shutil.copy2(_DDT_REPO_ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
+        _write_pyproject_toml(tmp_path)
 
         for subdir in ("pipelines", "connectors"):
             src = project_root / subdir
