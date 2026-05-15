@@ -48,9 +48,8 @@ resource "null_resource" "up" {
   depends_on = [local_file.compose, null_resource.build]
 
   triggers = {
-    content_hash      = var.content_hash
-    compose_hash      = sha256(local_file.compose.content)
-    compose_file_path = var.compose_file_path
+    content_hash = var.content_hash
+    compose_hash = sha256(local_file.compose.content)
   }
 
   provisioner "local-exec" {
@@ -59,6 +58,6 @@ resource "null_resource" "up" {
 
   provisioner "local-exec" {
     when    = destroy
-    command = "docker compose -f ${self.triggers.compose_file_path} down --volumes"
+    command = "docker compose -f ${var.compose_file_path} down --volumes"
   }
 }
