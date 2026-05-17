@@ -37,7 +37,7 @@ package = false
 dcf = { git = "https://github.com/zephschafer/dcf.git" }    
 ```
 
-**`project.yml`** (gitignore this file — it holds your credentials):
+**`project.yml`**
 
 ```yaml
 catalog: local
