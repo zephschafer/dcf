@@ -65,48 +65,24 @@ This schedules the collector to run daily at 8 AM UTC, as configured in `deploym
 
 ---
 
-## Developing dcf
-
-Clone this repo, then create or point to a project for testing:
+## Contributing
 
 ```bash
-git clone https://github.com/Data-Dispatch/dcf
+git clone https://github.com/zephschafer/dcf
 cd dcf
 uv sync
-
-# Test against the demo project
-git clone https://github.com/Data-Dispatch/quipu-data-generator ../quipu-data-generator
-cd ../quipu-data-generator
-uv sync   # picks up dcf from ../dcf via editable path dep
-uv run dcf validate all
 ```
 
-Or create a minimal test project:
+To test against a local project, point its `pyproject.toml` at your checkout:
 
-```bash
-mkdir my-test-project && cd my-test-project
-cat > pyproject.toml << 'EOF'
-[project]
-name = "my-test-project"
-version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = ["dcf-core"]
-
-[tool.uv]
-package = false
-
+```toml
 [tool.uv.sources]
 dcf-core = { path = "../dcf", editable = true }
-EOF
-
-cat > project.yml << 'EOF'
-catalog: local
-EOF
-
-mkdir collectors
-uv sync
-uv run dcf validate all   # "OK — 0 collector(s)"
 ```
+
+Then run `uv sync` in that project and use `uv run dcf` as normal.
+
+**Releasing:** bump `version` in `pyproject.toml` and push to main — GitHub Actions publishes to PyPI automatically.
 
 ---
 
