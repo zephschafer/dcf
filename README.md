@@ -21,6 +21,7 @@ uvx --from dcf-core dcf init
 ---
 
 ## Quickstart
+#### Get real data. From an API. Into your Lakehouse. Query it with SQL. In 5 lines.
 
 ```bash
 mkdir my-project && cd my-project
