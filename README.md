@@ -14,13 +14,29 @@ uvx --from dcf-core dcf init
 
 ## How it works
 
-1. **Define** a data collector in YAML — source, schema, cadence
+1. **Define** a [data collector in YAML](#example) — source, schema, cadence
 2. **Run** it with `dcf run`
 3. **Query** data from your data lake
 
 ---
 
+## Quickstart
+
+```bash
+mkdir my-project && cd my-project
+uvx --from dcf-core dcf init
+uv sync
+uv run dcf run dcf_commits
+uv run dcf query 'SELECT * FROM github.dcf_commits'
+```
+
+`dcf init` creates `pyproject.toml`, `project.yml`, `.gitignore`, `collectors/`, and an example collector.
+
+---
+
 ## Example
+
+### dcf collector:
 
 ```yaml
 name: dcf_commits
@@ -59,34 +75,15 @@ deployment:
   schedule: "0 8 * * *"
 ```
 
+### dcf run
 ```bash
 uv run dcf run dcf_commits
+```
+
+### dcf query
+```bash
 uv run dcf query 'SELECT * FROM github.dcf_commits LIMIT 5'
 ```
-
----
-
-## Install
-
-```bash
-pip install dcf-core
-```
-
-The CLI command is `dcf`.
-
----
-
-## Quickstart
-
-```bash
-mkdir my-project && cd my-project
-uvx --from dcf-core dcf init
-uv sync
-uv run dcf run dcf_commits
-uv run dcf query 'SELECT * FROM github.dcf_commits'
-```
-
-`dcf init` creates `pyproject.toml`, `project.yml`, `.gitignore`, `collectors/`, and an example collector.
 
 ---
 
