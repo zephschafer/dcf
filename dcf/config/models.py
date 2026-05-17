@@ -36,7 +36,7 @@ class RateLimit(BaseModel):
 
 
 class Response(BaseModel):
-    format: Literal["json", "csv"]
+    format: Literal["json", "csv"] = "json"
     records_path: str | None = None   # key (or dot-path) in JSON holding the records array
 
 
