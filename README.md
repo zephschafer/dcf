@@ -124,7 +124,7 @@ uv run dcf run dcf_commits
 ### 5. Query the warehouse
 
 ```bash
-uv run dcf query 'SELECT sha, author, message, committed_at FROM github.dcf_commits ORDER BY committed_at DESC'
+uv run dcf query 'SELECT * FROM github.dcf_commits ORDER BY committed_at DESC'
 ```
 
 You can also save your SQL to a file and run it with `--file`:
