@@ -16,16 +16,27 @@ from .. import writer as iceberg_writer
 def _log_preamble(collector: Collector, n_requests: int) -> None:
     print(f"\n[dcf] {collector.name}")
     src = collector.source
+    iterate = collector.cadence.iterate
+
+    iterated_params: set[str] = set()
+    if iterate:
+        for spec in iterate:
+            if isinstance(spec, DateRangeIterate):
+                iterated_params.update(spec.params)
+            elif isinstance(spec, CategoricalIterate):
+                iterated_params.add(spec.param)
+
     if isinstance(src, HttpSource):
-        print(f"  source:  {src.url}")
-        static = [(p.name, p.value) for p in src.params if p.value is not None]
-        if static:
-            print(f"  params:  {', '.join(f'{k}={v}' for k, v in static)}")
+        static = {p.name: p.value for p in src.params if p.value is not None}
+        query_parts = [*[f"{k}={v}" for k, v in static.items()],
+                       *[f"{name}={{{name}}}" for name in iterated_params]]
+        url = f"{src.url}?{'&'.join(query_parts)}" if query_parts else src.url
+        print(f"  url:     {url}")
     elif isinstance(src, PythonSource):
         print(f"  source:  {src.module}.{src.function}()")
     elif isinstance(src, PubSubSource):
         print(f"  source:  {src.subscription}")
-    iterate = collector.cadence.iterate
+
     if not iterate:
         print(f"  {n_requests} request, no iteration")
     else:
