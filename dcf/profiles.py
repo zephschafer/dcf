@@ -10,6 +10,15 @@ def _profiles_path() -> Path:
     return find_project_root() / "profiles.yml"
 
 
+def save_profile(name: str, profile: dict) -> None:
+    """Write a named profile back to profiles.yml, preserving other profiles."""
+    path = _profiles_path()
+    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    data = data or {}
+    data[name] = profile
+    path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+
+
 def load_profile(name: str = "default") -> dict:
     """Load a named profile from profiles.yml. Raises FileNotFoundError if absent."""
     path = _profiles_path()

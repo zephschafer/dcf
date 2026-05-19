@@ -10,15 +10,12 @@ from .models import Collector
 
 
 def _project_config() -> dict:
-    """Load project.yml from the project root, returning an empty dict if absent."""
-    from ..project import find_project_root
+    """Load .env from the project root as a lowercase-keyed dict for env var resolution."""
     try:
-        cfg_path = find_project_root() / "project.yml"
+        from ..state import load_env
+        return {k.lower(): v for k, v in load_env().items()}
     except RuntimeError:
         return {}
-    if cfg_path.exists():
-        return yaml.safe_load(cfg_path.read_text()) or {}
-    return {}
 
 
 def _resolve_env(

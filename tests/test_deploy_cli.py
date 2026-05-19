@@ -65,8 +65,8 @@ def test_deploy_local_catalog_routes_to_local_deploy(tmp_path, monkeypatch):
             "deployed_at": "2026-05-14T00:00:00+00:00",
         }
 
-    monkeypatch.setattr("dcf.local_deploy.deploy", mock_deploy)
-    monkeypatch.setattr("dcf.local_deploy._check_docker", lambda: None)
+    monkeypatch.setattr("dcf.deploy.local.deploy.deploy", mock_deploy)
+    monkeypatch.setattr("dcf.deploy.local.deploy._check_docker", lambda: None)
     result = runner.invoke(app, ["deploy", "my_collector"])
     assert result.exit_code == 0, result.output
     assert called.get("collector_name") == "my_collector"
@@ -92,8 +92,8 @@ def test_deploy_no_args_deploys_all(tmp_path, monkeypatch):
             "deployed_at": "2026-05-14T00:00:00+00:00",
         }
 
-    monkeypatch.setattr("dcf.local_deploy.deploy", mock_deploy)
-    monkeypatch.setattr("dcf.local_deploy._check_docker", lambda: None)
+    monkeypatch.setattr("dcf.deploy.local.deploy.deploy", mock_deploy)
+    monkeypatch.setattr("dcf.deploy.local.deploy._check_docker", lambda: None)
     result = runner.invoke(app, ["deploy"])
     assert result.exit_code == 0, result.output
     assert "collector_a" in deployed
@@ -116,7 +116,7 @@ def test_undeploy_not_deployed(tmp_path, monkeypatch):
     monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
     result = runner.invoke(app, ["undeploy", "my_collector"])
     assert result.exit_code == 1
-    assert "not in project.yml deployments" in result.output
+    assert "not in deployments" in result.output
 
 
 def test_deploy_status_none(tmp_path, monkeypatch):

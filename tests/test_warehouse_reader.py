@@ -2,8 +2,8 @@
 Tests for dcf.warehouse_reader covering F-018, F-019, F-020, F-021.
 
 All tests use a temporary local warehouse with real Parquet files — no GCS,
-no mocking of DuckDB. GCP-catalog behavior is tested by patching _project_config
-to return catalog=gcp and supplying a fake bucket resolver.
+no mocking of DuckDB. GCP-catalog behavior is tested by patching _catalog()
+to return "gcp" and supplying a fake bucket resolver.
 """
 from __future__ import annotations
 
@@ -30,14 +30,6 @@ def _make_parquet(dir_path: Path, rows: list[dict]) -> None:
     pq.write_table(table, data_dir / "part-001.parquet")
 
 
-def _local_config(warehouse: Path) -> dict:
-    return {"catalog": "local"}
-
-
-def _gcp_config(warehouse: Path) -> dict:
-    return {"catalog": "gcp", "gcp": {"warehouse_bucket": "fake-bucket"}}
-
-
 # ------------------------------------------------------------------ #
 # F-018: list_tables shows local tables when catalog=gcp              #
 # ------------------------------------------------------------------ #
@@ -51,7 +43,7 @@ class TestListTablesGcpShowsLocalTables:
         )
 
         with (
-            patch.object(wr, "_project_config", return_value=_gcp_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="gcp"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
             patch.object(wr, "_gcs_bucket", return_value="fake-bucket"),
             patch.object(wr, "_iter_gcs_tables", return_value=[]),  # no GCS tables
@@ -70,7 +62,7 @@ class TestListTablesGcpShowsLocalTables:
         arrow_tbl = pa.table({"x": [1, 2, 3]})
 
         with (
-            patch.object(wr, "_project_config", return_value=_gcp_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="gcp"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
             patch.object(wr, "_gcs_bucket", return_value="fake-bucket"),
             patch.object(wr, "_iter_gcs_tables", return_value=[("ns", "tbl")]),
@@ -93,7 +85,7 @@ class TestListTablesGcpShowsLocalTables:
         arrow_tbl = pa.table({"y": [10, 20]})
 
         with (
-            patch.object(wr, "_project_config", return_value=_gcp_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="gcp"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
             patch.object(wr, "_gcs_bucket", return_value="fake-bucket"),
             patch.object(wr, "_iter_gcs_tables", return_value=[("gcs_ns", "gcs_tbl")]),
@@ -110,7 +102,7 @@ class TestListTablesGcpShowsLocalTables:
         _make_parquet(tmp_path / "ns" / "tbl", [{"v": 1}])
 
         with (
-            patch.object(wr, "_project_config", return_value=_local_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="local"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
         ):
             tables = wr.list_tables()
@@ -156,7 +148,7 @@ class TestQueryDoesNotWrapDDL:
         sql = f"COPY (SELECT x FROM ns.tbl) TO '{out}' (FORMAT PARQUET)"
 
         with (
-            patch.object(wr, "_project_config", return_value=_local_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="local"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
         ):
             result = wr.query(sql)
@@ -173,7 +165,7 @@ class TestQueryDoesNotWrapDDL:
 
         sql = "SELECT x FROM ns.tbl"
         with (
-            patch.object(wr, "_project_config", return_value=_local_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="local"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
         ):
             result = wr.query(sql)
@@ -192,7 +184,7 @@ class TestMaterializeModel:
         _make_parquet(tmp_path / "src" / "src_tbl", [{"v": 10}, {"v": 20}])
 
         with (
-            patch.object(wr, "_project_config", return_value=_local_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="local"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
         ):
             result = wr.materialize_model("SELECT v * 2 AS doubled FROM src.src_tbl", "out", "doubled")
@@ -215,7 +207,7 @@ class TestMaterializeModel:
         _make_parquet(tmp_path / "src" / "src_tbl", [{"n": 1}, {"n": 2}, {"n": 3}])
 
         with (
-            patch.object(wr, "_project_config", return_value=_local_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="local"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
         ):
             wr.materialize_model("SELECT SUM(n) AS total FROM src.src_tbl", "agg", "totals")
@@ -237,7 +229,7 @@ class TestMaterializeModel:
         mock_gcs_module.Client.return_value = mock_client
 
         with (
-            patch.object(wr, "_project_config", return_value=_gcp_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="gcp"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
             patch.object(wr, "_gcs_bucket", return_value="fake-bucket"),
             patch.object(wr, "_iter_gcs_tables", return_value=[]),
@@ -263,7 +255,7 @@ class TestQueryLocalOnlyGcpFallback:
         _make_parquet(tmp_path / "myns" / "mytable", [{"x": 42}])
 
         with (
-            patch.object(wr, "_project_config", return_value=_gcp_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="gcp"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
             patch.object(wr, "_gcs_bucket", return_value="fake-bucket"),
             patch.object(wr, "_iter_gcs_tables", return_value=[]),
@@ -278,7 +270,7 @@ class TestQueryLocalOnlyGcpFallback:
         arrow_gcs = pa.table({"v": [7]})                      # GCS has 7
 
         with (
-            patch.object(wr, "_project_config", return_value=_gcp_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="gcp"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
             patch.object(wr, "_gcs_bucket", return_value="fake-bucket"),
             patch.object(wr, "_iter_gcs_tables", return_value=[("ns", "tbl")]),
@@ -291,7 +283,7 @@ class TestQueryLocalOnlyGcpFallback:
     def test_unknown_table_still_raises(self, tmp_path):
         """query() for a table that exists nowhere raises a DuckDB error."""
         with (
-            patch.object(wr, "_project_config", return_value=_gcp_config(tmp_path)),
+            patch.object(wr, "_catalog", return_value="gcp"),
             patch.object(wr, "_warehouse", return_value=tmp_path),
             patch.object(wr, "_gcs_bucket", return_value="fake-bucket"),
             patch.object(wr, "_iter_gcs_tables", return_value=[]),

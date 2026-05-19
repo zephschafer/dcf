@@ -71,14 +71,15 @@ def _tf_state_dir(project_root: Path) -> Path:
     """Return the Terraform state directory for this project.
 
     Defaults to <project_root>/.dcf/terraform; can be overridden with
-    `terraform_state_dir` in project.yml.
+    `terraform_state_dir` in .dcf/state.yml.
     """
-    cfg_path = project_root / "project.yml"
-    if cfg_path.exists():
-        cfg = yaml.safe_load(cfg_path.read_text()) or {}
-        custom = cfg.get("terraform_state_dir")
+    try:
+        from ...state import load_state
+        custom = load_state().get("terraform_state_dir")
         if custom:
             return Path(custom).expanduser()
+    except RuntimeError:
+        pass
     return project_root / ".dcf" / "terraform"
 
 
@@ -93,18 +94,16 @@ def _collect_env_vars(project_root: Path, collector_name: str) -> dict[str, str]
     if not var_names:
         return {}
 
-    project_cfg: dict = {}
-    cfg_path = project_root / "project.yml"
-    if cfg_path.exists():
-        project_cfg = yaml.safe_load(cfg_path.read_text()) or {}
+    from ...state import load_env
+    env_file = load_env()
 
     result: dict[str, str] = {}
     for var in dict.fromkeys(var_names):
-        value = os.environ.get(var) or project_cfg.get(var.lower())
+        value = os.environ.get(var) or env_file.get(var) or env_file.get(var.upper())
         if not value:
             raise EnvironmentError(
                 f"Collector references '{{{{ env.{var} }}}}' but '{var}' is not set "
-                f"in the host environment and '{var.lower()}' is not in project.yml"
+                f"in the environment or .env"
             )
         result[var] = value
     return result
@@ -413,34 +412,33 @@ def _airflow_content_hash() -> str:
 
 
 def _generate_airflow_credentials(project_root: Path) -> dict:
-    """Read/generate Airflow credentials from project.yml."""
-    cfg_path = project_root / "project.yml"
-    cfg: dict = yaml.safe_load(cfg_path.read_text()) or {} if cfg_path.exists() else {}
+    """Read/generate Airflow credentials from .env."""
+    from ...state import load_env, save_env
+    env = load_env()
 
-    admin_password = cfg.get("airflow_admin_password")
+    admin_password = env.get("AIRFLOW_ADMIN_PASSWORD")
     if not admin_password:
         import getpass
         admin_password = getpass.getpass("Enter Airflow admin password: ").strip()
         if not admin_password:
             raise RuntimeError("Airflow admin password cannot be empty.")
-        cfg["airflow_admin_password"] = admin_password
-        cfg_path.write_text(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
-        logger.info("Saved airflow_admin_password to project.yml")
+        save_env("AIRFLOW_ADMIN_PASSWORD", admin_password)
+        logger.info("Saved AIRFLOW_ADMIN_PASSWORD to .env")
 
-    changed = False
-
-    fernet_key = cfg.get("airflow_fernet_key")
+    fernet_key = env.get("AIRFLOW_FERNET_KEY")
     if not fernet_key:
         from cryptography.fernet import Fernet
         fernet_key = Fernet.generate_key().decode()
-        cfg["airflow_fernet_key"] = fernet_key
-        changed = True
+        save_env("AIRFLOW_FERNET_KEY", fernet_key)
 
-    if changed:
-        cfg_path.write_text(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
+    db_password = env.get("AIRFLOW_DB_PASSWORD")
+    if not db_password:
+        import secrets as _secrets
+        db_password = _secrets.token_urlsafe(16)
+        save_env("AIRFLOW_DB_PASSWORD", db_password)
 
     return {
-        "db_password": "airflow",
+        "db_password": db_password,
         "admin_password": admin_password,
         "fernet_key": fernet_key,
     }
