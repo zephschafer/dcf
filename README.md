@@ -20,6 +20,10 @@ uvx --from dcf-core dcf init
 
 ---
 
+<div style="position: relative; padding-bottom: 56.25%; height: 0;"><iframe src="https://www.loom.com/embed/e3fac8ddb842438cb38beaf07f8a43a4" frameborder="0" webkitallowfullscreen mozallowfullscreen allowfullscreen style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></iframe></div>
+
+---
+
 ## Quickstart
 #### Get real data. From an API. Into your Lakehouse. Query it with SQL. In 5 lines.
 
