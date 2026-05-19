@@ -161,6 +161,49 @@ def init(
 
 
 # ------------------------------------------------------------------ #
+# import                                                               #
+# ------------------------------------------------------------------ #
+
+@app.command(name="import")
+def import_(
+    source: str = typer.Argument(..., metavar="SOURCE",
+        help="hub name, user/repo, or pypi:name"),
+    name: str | None = typer.Option(None, "--name", "-n",
+        help="Override the output filename (without .yml)"),
+):
+    """Import a collector template from dcf-hub, a GitHub repo, or a PyPI package."""
+    from .hub import resolve, required_env_vars
+
+    collectors_dir = _collectors_dir()
+
+    try:
+        yaml_content, suggested_name = resolve(source)
+    except RuntimeError as e:
+        typer.echo(f"[dcf] Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    out_name = name or suggested_name
+    dest = collectors_dir / f"{out_name}.yml"
+
+    if dest.exists():
+        typer.echo(
+            f"[dcf] collectors/{dest.name} already exists. "
+            "Use --name to import under a different filename.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    dest.write_text(yaml_content)
+    typer.echo(f"[dcf] Imported → collectors/{dest.name}")
+
+    env_vars = required_env_vars(yaml_content)
+    if env_vars:
+        typer.echo("\nRequired env vars:")
+        for var in env_vars:
+            typer.echo(f"  export {var}=...")
+
+
+# ------------------------------------------------------------------ #
 # run                                                                  #
 # ------------------------------------------------------------------ #
 
