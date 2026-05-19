@@ -66,6 +66,15 @@ __pycache__/
 
 _PROJECT_YML_CONTENT = "catalog: local\n"
 
+_PROFILES_YML_TEMPLATE = """\
+# Cloud deployment target. Commit this file — it contains no secrets.
+# Credentials come from: gcloud auth application-default login
+default:
+  type: gcp
+  project_id: YOUR_GCP_PROJECT_ID
+  region: us-central1
+"""
+
 _EXAMPLE_COLLECTOR = """\
 name: so_questions
 namespace: stackoverflow
@@ -152,6 +161,11 @@ def init(
     if not example.exists():
         example.write_text(_EXAMPLE_COLLECTOR)
         created.append("collectors/so_questions.yml")
+
+    profiles = root / "profiles.yml"
+    if not profiles.exists():
+        profiles.write_text(_PROFILES_YML_TEMPLATE)
+        created.append("profiles.yml")
 
     if created:
         typer.echo(f"Created: {', '.join(created)}")
@@ -364,7 +378,7 @@ def gcp_setup(
     project_id: str = typer.Option(..., "--project-id", "-p", help="GCP project ID"),
     region: str = typer.Option(..., "--region", "-r", help="GCP region (e.g. us-central1)"),
 ):
-    """Provision a GCP data lake."""
+    """Provision a GCP data lake. Tip: dcf deploy handles this automatically when profiles.yml is configured."""
     from .deploy.gcp import bootstrap, terraform
     from .deploy.gcp.gcloud import get_credentials
 
@@ -550,19 +564,86 @@ def _require_gcp_config() -> tuple[dict, dict]:
     return cfg, gcp
 
 
+def _ensure_gcp_provisioned(profile: dict) -> tuple[dict, dict]:
+    """Provision GCP lake if not already done. Returns (full_cfg, gcp_section)."""
+    cfg = _load_config()
+    gcp = cfg.get("gcp", {})
+
+    if gcp.get("setup_status") == "complete":
+        for key in ("project_id", "region", "warehouse_bucket", "sa_email"):
+            if not gcp.get(key):
+                typer.echo(
+                    f"Error: gcp.{key} missing from project.yml. "
+                    "Delete the gcp section and re-run dcf deploy.",
+                    err=True,
+                )
+                raise typer.Exit(1)
+        return cfg, gcp
+
+    project_id = profile.get("project_id", "")
+    region = profile.get("region", "")
+    if not project_id or project_id == "YOUR_GCP_PROJECT_ID":
+        typer.echo(
+            "Error: set project_id in profiles.yml before deploying to GCP.", err=True
+        )
+        raise typer.Exit(1)
+
+    typer.echo("[dcf] First GCP deploy — provisioning lake (~2 min)...")
+
+    from .deploy.gcp.gcloud import get_credentials
+    try:
+        credentials = get_credentials()
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    gcp.update({"project_id": project_id, "region": region, "setup_status": "running"})
+    cfg["gcp"] = gcp
+    cfg["catalog"] = "gcp"
+    _save_config(cfg)
+
+    try:
+        from .deploy.gcp import bootstrap, terraform
+        tf_state_bucket  = bootstrap.create_state_bucket(project_id, region, credentials)
+        sa_email         = bootstrap.create_service_account(project_id, credentials)
+        key_data         = bootstrap.create_service_account_key(project_id, sa_email, credentials)
+        secret_name      = bootstrap.store_key_in_secret_manager(project_id, key_data, credentials)
+        warehouse_bucket = terraform.provision(
+            project_id=project_id, region=region,
+            sa_email=sa_email, tf_state_bucket=tf_state_bucket,
+        )
+        gcp.update({
+            "sa_email": sa_email, "secret_name": secret_name,
+            "tf_state_bucket": tf_state_bucket, "warehouse_bucket": warehouse_bucket,
+            "setup_status": "complete", "setup_error": None,
+        })
+        cfg["gcp"] = gcp
+        _save_config(cfg)
+        typer.echo("[dcf] Lake provisioned.")
+    except Exception as e:
+        gcp.update({"setup_status": "failed", "setup_error": _ANSI_RE.sub("", str(e))})
+        cfg["gcp"] = gcp
+        _save_config(cfg)
+        typer.echo(f"\n[dcf] Provisioning failed: {e}", err=True)
+        raise typer.Exit(1)
+
+    return _load_config(), _load_config()["gcp"]
+
+
 @app.command()
 def deploy(
     collector_name: str | None = typer.Argument(None, help="Collector name (without .yml), or omit to deploy all"),
+    profile: str = typer.Option("default", "--profile", "-p", help="Profile name from profiles.yml"),
 ):
     """Deploy a collector locally (Docker + Airflow) or to GCP based on catalog in project.yml."""
     if collector_name is None:
-        _deploy_all()
+        _deploy_all(profile_name=profile)
         return
 
-    _deploy_one(collector_name)
+    _deploy_one(collector_name, profile_name=profile)
 
 
-def _deploy_all() -> None:
+def _deploy_all(profile_name: str = "default") -> None:
     """Deploy every collector YAML that has a deployment: block."""
     collectors_dir = _collectors_dir()
     from .config import load_collector
@@ -585,7 +666,7 @@ def _deploy_all() -> None:
     for name in candidates:
         typer.echo(f"\n--- {name} ---")
         try:
-            _deploy_one(name)
+            _deploy_one(name, profile_name=profile_name)
         except SystemExit:
             failures.append(name)
         except Exception as e:
@@ -597,7 +678,7 @@ def _deploy_all() -> None:
         raise typer.Exit(1)
 
 
-def _deploy_one(collector_name: str) -> None:
+def _deploy_one(collector_name: str, profile_name: str = "default") -> None:
     from .config import load_collector
     from .config.models import PubSubSource
 
@@ -624,6 +705,18 @@ def _deploy_one(collector_name: str) -> None:
             "    window_seconds: 60\n",
             err=True,
         )
+        raise typer.Exit(1)
+
+    # If profiles.yml is present and targets GCP, auto-provision if needed
+    try:
+        from .profiles import load_profile
+        prof = load_profile(profile_name)
+        if prof.get("type") == "gcp":
+            _ensure_gcp_provisioned(prof)
+    except FileNotFoundError:
+        pass  # no profiles.yml — fall through to existing catalog check
+    except KeyError as e:
+        typer.echo(f"[dcf] {e}", err=True)
         raise typer.Exit(1)
 
     catalog = _get_catalog()
