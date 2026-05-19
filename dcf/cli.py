@@ -591,8 +591,6 @@ def _ensure_gcp_provisioned(profile: dict) -> tuple[dict, dict]:
         )
         raise typer.Exit(1)
 
-    typer.echo("[dcf] First GCP deploy — provisioning lake (~2 min)...")
-
     from .deploy.gcp.gcloud import get_credentials
     try:
         credentials = get_credentials()
@@ -600,19 +598,24 @@ def _ensure_gcp_provisioned(profile: dict) -> tuple[dict, dict]:
         typer.echo(str(e), err=True)
         raise typer.Exit(1)
 
-    try:
-        from .deploy.gcp import bootstrap, terraform
-        typer.echo("[dcf] Creating GCP project...")
-        project_id = bootstrap.create_project(project_name, credentials)
-        typer.echo(f"[dcf] Project created: {project_id}")
-    except Exception as e:
-        typer.echo(f"\n[dcf] Project creation failed: {e}", err=True)
-        raise typer.Exit(1)
+    from .deploy.gcp import bootstrap, terraform
 
-    gcp.update({"project_id": project_id, "region": region, "setup_status": "running"})
-    cfg["gcp"] = gcp
-    cfg["catalog"] = "gcp"
-    _save_config(cfg)
+    project_id = gcp.get("project_id")
+    if project_id:
+        typer.echo(f"[dcf] Resuming provisioning for existing project: {project_id}")
+    else:
+        typer.echo("[dcf] First GCP deploy — provisioning lake (~2 min)...")
+        try:
+            typer.echo("[dcf] Creating GCP project...")
+            project_id = bootstrap.create_project(project_name, credentials)
+            typer.echo(f"[dcf] Project created: {project_id}")
+        except Exception as e:
+            typer.echo(f"\n[dcf] Project creation failed: {e}", err=True)
+            raise typer.Exit(1)
+        gcp.update({"project_id": project_id, "region": region, "setup_status": "running"})
+        cfg["gcp"] = gcp
+        cfg["catalog"] = "gcp"
+        _save_config(cfg)
 
     try:
         tf_state_bucket  = bootstrap.create_state_bucket(project_id, region, credentials)
