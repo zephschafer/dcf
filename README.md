@@ -104,6 +104,14 @@ uv run dcf query 'SELECT * FROM stackoverflow.so_questions LIMIT 5'
 
 ---
 
+## More features
+
+- [Importing collectors from dcf-hub, GitHub, or PyPI](docs/collector-import.md) — `dcf import`
+- [Authenticated collectors](docs/authenticated-collector.md) — bearer tokens, API keys, `{{ env.VAR }}`
+- [Collector config reference](docs/collector-config.md) — full YAML field reference
+
+---
+
 ## Contributing
 
 ```bash
