@@ -2,9 +2,17 @@
 
 `dcf import` pulls a collector template from dcf-hub, a GitHub repo, or a PyPI package into your project's `collectors/` directory.
 
+## Publishing your own collector
+
+Choose the path that fits your use case:
+
+- [Contributing a hub collector](contributing-hub-collector.md) — YAML only, open a PR to dcf-hub
+- [Publishing a GitHub repo collector](contributing-github-collector.md) — share in your own repo, no approval needed
+- [Publishing a PyPI package](contributing-pypi-collector.md) — Python-backed connectors with custom auth or pagination
+
 ---
 
-## Hub collectors
+## [Hub collectors]((contributing-hub-collector.md)
 
 dcf-hub is a curated library of ready-made collector templates. Import one by name:
 
@@ -17,7 +25,7 @@ The YAML is copied into `collectors/<name>.yml` and is yours to edit and commit.
 
 ---
 
-## Third-party GitHub repos
+## [Third-party GitHub repos](contributing-github-collector.md)
 
 Anyone can publish a collector as a GitHub repo with a `collector.yml` at the root:
 
@@ -29,7 +37,7 @@ This fetches `https://raw.githubusercontent.com/alice/dcf-jira/main/collector.ym
 
 ---
 
-## PyPI packages
+## [PyPI packages](contributing-pypi-collector.md)
 
 For connectors that require Python code (OAuth flows, GraphQL, cursor pagination), install via PyPI:
 
