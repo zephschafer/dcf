@@ -71,7 +71,7 @@ _PROFILES_YML_TEMPLATE = """\
 # Credentials come from: gcloud auth application-default login
 default:
   type: gcp
-  project_id: YOUR_GCP_PROJECT_ID
+  project_name: my-dcf-project
   region: us-central1
 """
 
@@ -445,35 +445,12 @@ def gcp_setup(
         raise typer.Exit(1)
 
 
-@gcp_app.command("teardown")
-def gcp_teardown(
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
-):
-    """Destroy GCP lake resources (warehouse bucket, service account, Secret Manager secret)."""
+def _gcp_teardown_lake(gcp: dict, credentials) -> list[str]:
+    """Destroy GCP lake resources. Returns list of destroyed resource names."""
     from .deploy.gcp import bootstrap, terraform
-    from .deploy.gcp.gcloud import get_credentials
-
-    cfg = _load_config()
-    gcp = cfg.get("gcp", {})
-
-    if not gcp or gcp.get("setup_status") not in ("complete", "failed"):
-        typer.echo("No completed GCP setup found in project.yml. Nothing to tear down.")
-        return
-
-    project_id = gcp.get("project_id", "")
-    if not yes:
-        typer.confirm(
-            f"This will destroy all GCP resources for project '{project_id}'. Continue?",
-            abort=True,
-        )
-
-    try:
-        credentials = get_credentials()
-    except RuntimeError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1)
 
     destroyed: list[str] = []
+    project_id = gcp.get("project_id", "")
 
     tf_state_bucket = gcp.get("tf_state_bucket", "")
     if tf_state_bucket:
@@ -506,6 +483,38 @@ def gcp_teardown(
             destroyed.append("service account")
         except Exception as e:
             typer.echo(f"  service account delete failed (continuing): {e}", err=True)
+
+    return destroyed
+
+
+@gcp_app.command("teardown")
+def gcp_teardown(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+):
+    """Destroy GCP lake resources (warehouse bucket, service account, Secret Manager secret)."""
+    from .deploy.gcp.gcloud import get_credentials
+
+    cfg = _load_config()
+    gcp = cfg.get("gcp", {})
+
+    if not gcp or gcp.get("setup_status") not in ("complete", "failed"):
+        typer.echo("No completed GCP setup found in project.yml. Nothing to tear down.")
+        return
+
+    project_id = gcp.get("project_id", "")
+    if not yes:
+        typer.confirm(
+            f"This will destroy all GCP resources for project '{project_id}'. Continue?",
+            abort=True,
+        )
+
+    try:
+        credentials = get_credentials()
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    destroyed = _gcp_teardown_lake(gcp, credentials)
 
     cfg.pop("gcp", None)
     cfg["catalog"] = "local"
@@ -580,11 +589,11 @@ def _ensure_gcp_provisioned(profile: dict) -> tuple[dict, dict]:
                 raise typer.Exit(1)
         return cfg, gcp
 
-    project_id = profile.get("project_id", "")
+    project_name = profile.get("project_name", "")
     region = profile.get("region", "")
-    if not project_id or project_id == "YOUR_GCP_PROJECT_ID":
+    if not project_name or project_name == "my-dcf-project":
         typer.echo(
-            "Error: set project_id in profiles.yml before deploying to GCP.", err=True
+            "Error: set project_name in profiles.yml before deploying to GCP.", err=True
         )
         raise typer.Exit(1)
 
@@ -597,13 +606,21 @@ def _ensure_gcp_provisioned(profile: dict) -> tuple[dict, dict]:
         typer.echo(str(e), err=True)
         raise typer.Exit(1)
 
+    try:
+        from .deploy.gcp import bootstrap, terraform
+        typer.echo("[dcf] Creating GCP project...")
+        project_id = bootstrap.create_project(project_name, credentials)
+        typer.echo(f"[dcf] Project created: {project_id}")
+    except Exception as e:
+        typer.echo(f"\n[dcf] Project creation failed: {e}", err=True)
+        raise typer.Exit(1)
+
     gcp.update({"project_id": project_id, "region": region, "setup_status": "running"})
     cfg["gcp"] = gcp
     cfg["catalog"] = "gcp"
     _save_config(cfg)
 
     try:
-        from .deploy.gcp import bootstrap, terraform
         tf_state_bucket  = bootstrap.create_state_bucket(project_id, region, credentials)
         sa_email         = bootstrap.create_service_account(project_id, credentials)
         key_data         = bootstrap.create_service_account_key(project_id, sa_email, credentials)
@@ -823,25 +840,61 @@ def undeploy(
     deployments = cfg.get("deployments", {})
 
     if collector_name is None:
-        # Undeploy everything
-        if not deployments:
+        catalog = _get_catalog()
+        gcp = cfg.get("gcp", {})
+        is_gcp = catalog == "gcp" and gcp.get("setup_status") in ("complete", "failed")
+
+        if not deployments and not is_gcp:
             typer.echo("Nothing to undeploy.")
             return
+
         if not yes:
-            typer.confirm(
-                f"Destroy all {len(deployments)} collector(s) and the Airflow stack? "
-                "(warehouse data will NOT be deleted)",
-                abort=True,
-            )
-        try:
-            from .deploy.local import deploy as local
-            local.undeploy_all(deployments, _project_root())
-        except Exception as e:
-            typer.echo(f"\nUndeploy failed: {e}", err=True)
-            raise typer.Exit(1)
+            msg = f"Destroy all {len(deployments)} collector deployment(s)"
+            if is_gcp:
+                msg += " and all GCP lake infrastructure (warehouse bucket, service account, secrets)"
+            typer.confirm(msg + "?", abort=True)
+
+        if catalog == "local":
+            try:
+                from .deploy.local import deploy as local
+                local.undeploy_all(deployments, _project_root())
+            except Exception as e:
+                typer.echo(f"\nUndeploy failed: {e}", err=True)
+                raise typer.Exit(1)
+        else:
+            for name, dep in list(deployments.items()):
+                typer.echo(f"Undeploying '{name}'...")
+                try:
+                    if dep.get("type") == "streaming":
+                        from .deploy.gcp import streaming_deploy
+                        streaming_deploy.undeploy(
+                            collector_name=name, deployment=dep, gcp_config=gcp
+                        )
+                    else:
+                        from .deploy.gcp import batch_deploy
+                        batch_deploy.undeploy(
+                            collector_name=name, deployment=dep,
+                            gcp_config=gcp, project_root=_project_root(),
+                        )
+                except Exception as e:
+                    typer.echo(f"  failed (continuing): {e}", err=True)
+
         cfg.pop("deployments", None)
+
+        if is_gcp:
+            from .deploy.gcp.gcloud import get_credentials
+            try:
+                credentials = get_credentials()
+                destroyed = _gcp_teardown_lake(gcp, credentials)
+                if destroyed:
+                    typer.echo(f"Lake torn down: {', '.join(destroyed)}.")
+            except Exception as e:
+                typer.echo(f"\nLake teardown failed: {e}", err=True)
+            cfg.pop("gcp", None)
+            cfg["catalog"] = "local"
+
         _save_config(cfg)
-        typer.echo("All collectors undeployed. Warehouse data is untouched.")
+        typer.echo("All collectors undeployed.")
         return
 
     if collector_name not in deployments:
