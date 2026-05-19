@@ -1,6 +1,8 @@
 import base64
 import json
 import logging
+import re
+import time as _time
 
 from google.api_core.exceptions import Conflict, NotFound
 from google.auth.credentials import Credentials
@@ -12,6 +14,40 @@ logger = logging.getLogger(__name__)
 
 _SA_ACCOUNT_ID = "dcf-lake"
 _SECRET_ID     = "dcf-lake-sa-key"
+
+
+def create_project(project_name: str, credentials: Credentials) -> str:
+    """
+    Create a new GCP project suffixed with the current epoch timestamp.
+    Returns the generated project_id.
+    """
+    slug = re.sub(r"[^a-z0-9-]", "-", project_name.lower()).strip("-")[:19].rstrip("-")
+    project_id = f"{slug}-{int(_time.time())}"
+
+    service = discovery.build(
+        "cloudresourcemanager", "v1", credentials=credentials, cache_discovery=False
+    )
+    operation = service.projects().create(
+        body={"projectId": project_id, "name": project_name}
+    ).execute()
+
+    for _ in range(30):
+        op = service.operations().get(name=operation["name"]).execute()
+        if op.get("done"):
+            if "error" in op:
+                raise RuntimeError(
+                    f"GCP project creation failed: {op['error'].get('message', op['error'])}"
+                )
+            break
+        _time.sleep(2)
+    else:
+        raise RuntimeError(
+            f"GCP project creation timed out. "
+            f"Check status at https://console.cloud.google.com/cloud-resource-manager"
+        )
+
+    logger.info("Created GCP project %s", project_id)
+    return project_id
 
 
 def create_state_bucket(project_id: str, region: str, credentials: Credentials) -> str:
