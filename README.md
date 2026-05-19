@@ -21,6 +21,10 @@ uvx --from dcf-core dcf init
 ---
 
 <p align="center">
+  <a href="https://www.youtube.com/watch?v=gkWuNUfdf9o" style="font-size: 1.25em; font-weight: bold; text-decoration: none;">
+    ▶️ Video Tutorial: How to Run a Collector with the dcf CLI
+  </a>
+  <br><br>
   <a href="https://www.youtube.com/watch?v=gkWuNUfdf9o">
     <img src="https://img.youtube.com/vi/gkWuNUfdf9o/maxresdefault.jpg" alt="How to Run a Collector with the dcf CLI" width="75%">
   </a>
