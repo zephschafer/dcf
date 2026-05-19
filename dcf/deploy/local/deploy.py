@@ -44,9 +44,9 @@ def _write_pyproject_toml(dest: Path) -> None:
 
     import importlib.metadata
 
-    meta = importlib.metadata.metadata("dcf")
+    meta = importlib.metadata.metadata("dcf-core")
     version = meta["Version"]
-    reqs = importlib.metadata.requires("dcf") or []
+    reqs = importlib.metadata.requires("dcf-core") or []
     direct_deps = [r for r in reqs if "extra ==" not in r]
     deps_str = "\n".join(f'    "{r}",' for r in direct_deps)
     (dest / "pyproject.toml").write_text(
