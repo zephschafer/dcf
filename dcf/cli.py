@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
@@ -38,6 +37,21 @@ def _save_config(config: dict) -> None:
 
 def _get_catalog() -> str:
     return _load_config().get("catalog", "local")
+
+
+def _prompt_for_missing_var(var: str) -> str:
+    import sys
+    if not sys.stdin.isatty():
+        raise EnvironmentError(
+            f"'{var}' is not set — add it as an environment variable "
+            f"or set '{var.lower()}' in project.yml"
+        )
+    value = typer.prompt(f"Enter value for {var}", hide_input=True)
+    cfg = _load_config()
+    cfg[var.lower()] = value
+    _save_config(cfg)
+    typer.echo(f"Saved '{var.lower()}' to project.yml.")
+    return value
 
 
 # ------------------------------------------------------------------ #
@@ -244,7 +258,7 @@ def run(
         if not path.exists():
             typer.echo(f"Collector not found: {path}", err=True)
             raise typer.Exit(1)
-        collectors = [load_collector(path)]
+        collectors = [load_collector(path, on_missing=_prompt_for_missing_var)]
 
     for collector in collectors:
         if start or end:
@@ -256,13 +270,6 @@ def run(
 # validate                                                             #
 # ------------------------------------------------------------------ #
 
-def _check_unset_env_refs(path: Path) -> list[str]:
-    """Return sorted list of {{ env.VAR }} references in a YAML file that are not currently set."""
-    raw = path.read_text()
-    refs = re.findall(r"\{\{\s*env\.(\w+)\s*\}\}", raw)
-    cfg = _load_config()
-    return sorted({v for v in refs if not os.environ.get(v) and not cfg.get(v.lower())})
-
 
 @app.command()
 def validate(
@@ -273,16 +280,10 @@ def validate(
 
     collectors_dir = _collectors_dir()
     if collector_name == "all":
-        collectors = load_all_collectors(collectors_dir, resolve_env=False)
+        collectors = load_all_collectors(
+            collectors_dir, resolve_env=True, on_missing=_prompt_for_missing_var
+        )
         names = [c.name for c in collectors]
-        for path in sorted(collectors_dir.rglob("*.yml")):
-            unset = _check_unset_env_refs(path)
-            if unset:
-                typer.echo(
-                    f"  WARNING '{path.stem}': these env vars are not set: {', '.join(unset)}\n"
-                    f"    Set them as environment variables or add to project.yml before running.",
-                    err=True,
-                )
         typer.echo(f"OK — {len(collectors)} collector(s): {', '.join(names)}")
     else:
         path = collectors_dir / f"{collector_name}.yml"
@@ -290,7 +291,7 @@ def validate(
             typer.echo(f"Collector not found: {path}", err=True)
             raise typer.Exit(1)
         try:
-            collector = load_collector(path, resolve_env=False)
+            collector = load_collector(path, resolve_env=True, on_missing=_prompt_for_missing_var)
         except Exception as e:
             from pydantic import ValidationError
             if isinstance(e, ValidationError):
@@ -300,13 +301,6 @@ def validate(
             else:
                 typer.echo(f"Error loading '{collector_name}': {e}", err=True)
             raise typer.Exit(1)
-        unset = _check_unset_env_refs(path)
-        if unset:
-            typer.echo(
-                f"WARNING: these env vars are referenced but not set: {', '.join(unset)}\n"
-                f"  Set them as environment variables or add to project.yml before running.",
-                err=True,
-            )
         from .config.models import PubSubSource
         if isinstance(collector.source, PubSubSource):
             typer.echo(
