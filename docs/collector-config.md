@@ -203,7 +203,7 @@ Pub/Sub sources require `deployment.type: streaming` and `cadence.strategy: appe
 Any string value in the config can reference an environment variable using `{{ env.VAR_NAME }}`. dcf resolves these at load time:
 
 1. Checks `os.environ` for `VAR_NAME`
-2. Falls back to the matching key in `project.yml` (lowercased, e.g. `var_name`)
+2. Falls back to the matching key in `.env` (lowercased, e.g. `var_name`)
 3. Raises an error if neither is found
 
 ```yaml
@@ -441,7 +441,7 @@ source:
   method: GET
   auth:
     type: bearer
-    value: "{{ env.GITHUB_TOKEN }}"   # resolved from env or project.yml
+    value: "{{ env.GITHUB_TOKEN }}"   # resolved from env or .env
   params:
     - name: sha
       type: string

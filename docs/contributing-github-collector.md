@@ -46,18 +46,32 @@ source:
     type: bearer
     value: "{{ env.JIRA_TOKEN }}"
   params:
-    - {name: jql,        type: string, value: "project = MYPROJECT ORDER BY created ASC"}
-    - {name: maxResults, type: integer, value: 100}
-    - {name: startAt,    type: integer, value: 0}
+    - name: jql
+      type: string
+      value: "project = MYPROJECT ORDER BY created ASC"
+    - name: maxResults
+      type: integer
+      value: 100
+    - name: startAt
+      type: integer
+      value: 0
   response:
     format: json
     records_path: issues
   schema:
     columns:
-      - {name: id,      path: id,                type: string}
-      - {name: key,     path: key,               type: string}
-      - {name: summary, path: fields.summary,    type: string}
-      - {name: status,  path: fields.status.name, type: string}
+      - name: id
+        path: id
+        type: string
+      - name: key
+        path: key
+        type: string
+      - name: summary
+        path: fields.summary
+        type: string
+      - name: status
+        path: fields.status.name
+        type: string
 
 cadence:
   strategy: incremental

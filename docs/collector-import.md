@@ -73,15 +73,14 @@ Required env vars:
   export JIRA_DOMAIN=...
 ```
 
-Set these as environment variables or add them (lowercased) to `project.yml`:
+Set these as environment variables or add them to `.env`:
 
-```yaml
-catalog: local
-jira_token: your-token-here
-jira_domain: yourorg.atlassian.net
+```
+JIRA_TOKEN=your-token-here
+JIRA_DOMAIN=yourorg.atlassian.net
 ```
 
-`project.yml` is gitignored and safe for credentials. See [authenticated-collector.md](authenticated-collector.md) for details.
+`.env` is gitignored and safe for credentials. See [authenticated-collector.md](authenticated-collector.md) for details.
 
 ---
 

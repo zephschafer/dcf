@@ -25,17 +25,27 @@ source:
   url: https://api.weather.gov/stations/{station}/observations
   method: GET
   params:
-    - {name: station, type: string, value: KPDX}
-    - {name: start,   type: string}
-    - {name: end,     type: string}
+    - name: station
+      type: string
+      value: KPDX
+    - name: start
+      type: string
+    - name: end
+      type: string
   response:
     format: json
     records_path: features
   schema:
     columns:
-      - {name: timestamp,    path: properties.timestamp,   type: timestamp}
-      - {name: temperature,  path: properties.temperature.value, type: float}
-      - {name: station_id,   path: properties.station,     type: string}
+      - name: timestamp
+        path: properties.timestamp
+        type: timestamp
+      - name: temperature
+        path: properties.temperature.value
+        type: float
+      - name: station_id
+        path: properties.station
+        type: string
 
 cadence:
   strategy: incremental

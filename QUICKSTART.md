@@ -36,17 +36,11 @@ package = false
 dcf = { git = "https://github.com/zephschafer/dcf.git" }
 ```
 
-**`project.yml`:**
-
-```yaml
-catalog: local
-```
-
 **`.gitignore`:**
 
 ```
 warehouse/
-project.yml
+.env
 .venv/
 __pycache__/
 ```
@@ -258,7 +252,7 @@ conn.execute("SELECT COUNT(*) FROM read_parquet('warehouse/github/dcf_commits/da
 - **Project array fields** — use the `array_join` transform to flatten list fields like `topics` into a comma-separated string.
 - **Add a Python connector** — for APIs that need pagination, multi-step auth, or response reshaping, write a `connectors/` function and use `type: python`.
 - **Collectors that require credentials** — see [docs/authenticated-collector.md](docs/authenticated-collector.md) for how to configure bearer auth and store API keys safely.
-- **Ship to the cloud** — run `dcf gcp setup` to provision a GCS-backed Iceberg lake and set `catalog: gcp` in `project.yml`.
+- **Ship to the cloud** — run `dcf gcp setup` to provision a GCS-backed Iceberg lake and set `catalog: gcp` in `.dcf/state.yml`.
 - **Use Claude to build collectors** — run `dcf mcp setup-desktop` to register the MCP server with Claude Desktop. Claude can then write, validate, and run collectors on your behalf using the `new-collector` skill.
 
 See [README.md](README.md) for the full YAML schema reference and CLI documentation.

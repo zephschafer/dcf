@@ -9,16 +9,15 @@ Some APIs require credentials — a bearer token, API key, or similar. This docu
 dcf resolves `{{ env.VAR }}` placeholders in pipeline YAML from two places, in order:
 
 1. OS environment variable (`export GITHUB_TOKEN=...`)
-2. `project.yml` key (lowercased, e.g. `github_token: ...`)
+2. `.env` file key (lowercased, e.g. `github_token: ...`)
 
-For credentials you want to persist across shell sessions, add them to `project.yml`:
+For credentials you want to persist across shell sessions, add them to `.env`:
 
-```yaml
-catalog: local
-github_token: ghp_xxxxxxxxxxxx
+```
+GITHUB_TOKEN=ghp_xxxxxxxxxxxx
 ```
 
-`project.yml` is gitignored and never committed — it is the right place for API keys.
+`.env` is gitignored and never committed — it is the right place for API keys.
 
 ---
 
@@ -53,10 +52,18 @@ source:
       type: string
   schema:
     columns:
-      - {name: sha,          path: sha,                type: string}
-      - {name: author,       path: commit.author.name, type: string}
-      - {name: message,      path: commit.message,     type: string}
-      - {name: committed_at, path: commit.author.date, type: timestamp}
+      - name: sha
+        path: sha
+        type: string
+      - name: author
+        path: commit.author.name
+        type: string
+      - name: message
+        path: commit.message
+        type: string
+      - name: committed_at
+        path: commit.author.date
+        type: timestamp
 
 cadence:
   strategy: incremental
@@ -75,7 +82,7 @@ deployment:
 A few things to notice:
 
 - **`auth.key: token`** — bearer auth doesn't use the key field, but the schema requires it. Use any placeholder.
-- **`{{ env.GITHUB_TOKEN }}`** — resolved from `project.yml` or your shell environment at run time.
+- **`{{ env.GITHUB_TOKEN }}`** — resolved from `.env` or your shell environment at run time.
 - **`type: timestamp`** — parses ISO 8601 strings with timezone info into native timestamps.
 
 ### What this produces
@@ -102,10 +109,18 @@ source:
       type: string
   schema:
     columns:
-      - {name: sha,          path: sha,                type: string}
-      - {name: author,       path: commit.author.name, type: string}
-      - {name: message,      path: commit.message,     type: string}
-      - {name: committed_at, path: commit.author.date, type: timestamp}
+      - name: sha
+        path: sha
+        type: string
+      - name: author
+        path: commit.author.name
+        type: string
+      - name: message
+        path: commit.message
+        type: string
+      - name: committed_at
+        path: commit.author.date
+        type: timestamp
 
 cadence:
   strategy: incremental
@@ -167,7 +182,7 @@ If your token is missing or wrong:
 
 ```
 # Missing token:
-OSError: 'GITHUB_TOKEN' is not set — add it as an environment variable or set 'github_token' in project.yml
+OSError: 'GITHUB_TOKEN' is not set — add it as an environment variable or set 'github_token' in .env
 
 # Wrong token:
 fetch error: 401 Client Error: Unauthorized for url: https://api.github.com/repos/zephschafer/dcf/commits?...

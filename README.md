@@ -43,7 +43,7 @@ uv run dcf run so_questions
 uv run dcf query 'SELECT * FROM stackoverflow.so_questions'
 ```
 
-`dcf init` creates `pyproject.toml`, `project.yml`, `.gitignore`, `collectors/`, and an example collector.
+`dcf init` creates `pyproject.toml`, `profiles.yml`, `.gitignore`, `collectors/`, and an example collector.
 
 ---
 
@@ -61,22 +61,50 @@ source:
   response:
     records_path: items
   params:
-    - {name: site,     type: string,  value: stackoverflow}
-    - {name: tagged,   type: string,  value: "python;data-engineering"}
-    - {name: order,    type: string,  value: asc}
-    - {name: sort,     type: string,  value: creation}
-    - {name: pagesize, type: integer, value: 100}
-    - {name: fromdate, type: string,  format: "%s"}
-    - {name: todate,   type: string,  format: "%s"}
+    - name: site
+      type: string
+      value: stackoverflow
+    - name: tagged
+      type: string
+      value: "python;data-engineering"
+    - name: order
+      type: string
+      value: asc
+    - name: sort
+      type: string
+      value: creation
+    - name: pagesize
+      type: integer
+      value: 100
+    - name: fromdate
+      type: string
+      format: "%s"
+    - name: todate
+      type: string
+      format: "%s"
   schema:
     columns:
-      - {name: question_id,   path: question_id,   type: integer}
-      - {name: title,         path: title,         type: string}
-      - {name: score,         path: score,         type: integer}
-      - {name: answer_count,  path: answer_count,  type: integer}
-      - {name: view_count,    path: view_count,    type: integer}
-      - {name: creation_date, path: creation_date, type: integer}
-      - {name: link,          path: link,          type: string}
+      - name: question_id
+        path: question_id
+        type: integer
+      - name: title
+        path: title
+        type: string
+      - name: score
+        path: score
+        type: integer
+      - name: answer_count
+        path: answer_count
+        type: integer
+      - name: view_count
+        path: view_count
+        type: integer
+      - name: creation_date
+        path: creation_date
+        type: integer
+      - name: link
+        path: link
+        type: string
 
 cadence:
   strategy: incremental

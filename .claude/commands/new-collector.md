@@ -16,7 +16,7 @@ Ask the user (or use context already provided):
 If the API requires authentication, handle this before writing any collector YAML:
 
 **Does the API need a key or token?**
-- Check whether the credential already exists: look for it as an environment variable (e.g. `STRIPE_SECRET_KEY`) or in `project.yml` as a lowercase key (e.g. `stripe_secret_key`).
+- Check whether the credential already exists: look for it as an environment variable (e.g. `STRIPE_SECRET_KEY`) or in `.env` as a lowercase key (e.g. `stripe_secret_key`).
 - If it doesn't exist, tell the user what they need to create and where to find it. Common patterns:
   - **GitHub PAT:** github.com → Settings → Developer settings → Personal access tokens → Tokens (classic) → generate with needed scopes (e.g. `repo`, `read:org`)
   - **API key:** typically in the service's developer dashboard or settings page
@@ -29,9 +29,9 @@ Option 1 — environment variable (preferred for secrets):
 export MY_API_KEY=sk-xxxx
 ```
 
-Option 2 — `project.yml` (convenient for persistent keys; ensure project.yml is gitignored):
-```yaml
-my_api_key: sk-xxxx
+Option 2 — `.env` (convenient for persistent keys; ensure .env is gitignored):
+```
+MY_API_KEY=sk-xxxx
 ```
 
 Then reference it in collector YAML as `{{ env.MY_API_KEY }}`.
@@ -204,7 +204,7 @@ If the user wants this collector to run on a schedule in the cloud rather than j
 ```bash
 dcf gcp setup --project-id <gcp-project-id> --region us-central1
 ```
-This provisions a GCS warehouse bucket and a service account. Set `catalog: gcp` in `project.yml` (or re-run `dcf init`).
+This provisions a GCS warehouse bucket and a service account. Set `catalog: gcp` in `.dcf/state.yml` (or re-run `dcf init`).
 
 **Enable required GCP APIs:**
 ```bash

@@ -33,20 +33,30 @@ source:
   module: dcf_jira
   function: fetch
   params:
-    - {name: project_key, type: string, value: MYPROJECT}
+    - name: project_key
+      type: string
+      value: MYPROJECT
   schema:
     columns:
-      - {name: id,      path: id,                 type: string}
-      - {name: key,     path: key,                type: string}
-      - {name: summary, path: fields.summary,     type: string}
-      - {name: status,  path: fields.status.name, type: string}
+      - name: id
+        path: id
+        type: string
+      - name: key
+        path: key
+        type: string
+      - name: summary
+        path: fields.summary
+        type: string
+      - name: status
+        path: fields.status.name
+        type: string
 
 cadence:
   strategy: incremental
   primary_key: id
 ```
 
-Use `{{ env.VAR }}` for any credentials — they'll be resolved at run time from the user's environment or `project.yml`.
+Use `{{ env.VAR }}` for any credentials — they'll be resolved at run time from the user's environment or `.env`.
 
 ---
 
