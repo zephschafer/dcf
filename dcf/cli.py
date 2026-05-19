@@ -261,7 +261,7 @@ def validate(
     if collector_name == "all":
         collectors = load_all_collectors(collectors_dir, resolve_env=False)
         names = [c.name for c in collectors]
-        for path in sorted(collectors_dir.glob("*.yml")):
+        for path in sorted(collectors_dir.rglob("*.yml")):
             unset = _check_unset_env_refs(path)
             if unset:
                 typer.echo(
@@ -568,7 +568,7 @@ def _deploy_all() -> None:
     from .config import load_collector
 
     candidates = []
-    for path in sorted(collectors_dir.glob("*.yml")):
+    for path in sorted(collectors_dir.rglob("*.yml")):
         try:
             collector = load_collector(path, resolve_env=False)
             if collector.deployment is not None:

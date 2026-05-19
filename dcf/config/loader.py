@@ -74,4 +74,4 @@ def _strip_env_placeholders(obj):
 
 
 def load_all_collectors(collectors_dir: Path, resolve_env: bool = True) -> list[Collector]:
-    return [load_collector(p, resolve_env=resolve_env) for p in sorted(collectors_dir.glob("*.yml"))]
+    return [load_collector(p, resolve_env=resolve_env) for p in sorted(collectors_dir.rglob("*.yml"))]
