@@ -64,18 +64,6 @@ source:
     - name: site
       type: string
       value: stackoverflow
-    - name: tagged
-      type: string
-      value: "python;data-engineering"
-    - name: order
-      type: string
-      value: asc
-    - name: sort
-      type: string
-      value: creation
-    - name: pagesize
-      type: integer
-      value: 100
     - name: fromdate
       type: string
       format: "%s"
@@ -90,21 +78,9 @@ source:
       - name: title
         path: title
         type: string
-      - name: score
-        path: score
-        type: integer
-      - name: answer_count
-        path: answer_count
-        type: integer
-      - name: view_count
-        path: view_count
-        type: integer
       - name: creation_date
         path: creation_date
         type: integer
-      - name: link
-        path: link
-        type: string
 
 cadence:
   strategy: incremental
@@ -112,12 +88,9 @@ cadence:
   iterate:
     - type: date_range
       params: [fromdate, todate]
-      start: "2024-01-01"
+      start: "2025-01-01"
       end: today
       step: 30 days
-
-deployment:
-  schedule: "0 8 * * *"
 ```
 
 ### dcf run
