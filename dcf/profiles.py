@@ -14,10 +14,9 @@ def load_profile(name: str = "default") -> dict:
     """Load a named profile from profiles.yml. Raises FileNotFoundError if absent."""
     path = _profiles_path()
     data = yaml.safe_load(path.read_text()) or {}
+    if not data:
+        raise FileNotFoundError("profiles.yml is empty")
     if name not in data:
         available = list(data.keys())
-        raise KeyError(
-            f"Profile '{name}' not found in profiles.yml."
-            + (f" Available: {available}" if available else " File is empty.")
-        )
+        raise KeyError(f"Profile '{name}' not found in profiles.yml. Available: {available}")
     return data[name]
