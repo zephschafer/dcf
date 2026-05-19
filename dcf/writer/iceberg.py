@@ -12,11 +12,12 @@ from ..config.models import Collector, StagingConfig, MergeConfig
 
 
 def _gcs_warehouse_bucket() -> str:
-    import yaml
-    from ..project import find_project_root
-    cfg_file = find_project_root() / "project.yml"
-    cfg = yaml.safe_load(cfg_file.read_text()) if cfg_file.exists() else {}
-    bucket = cfg.get("gcp", {}).get("warehouse_bucket")
+    from ..profiles import load_profile
+    try:
+        profile = load_profile("default")
+    except (FileNotFoundError, KeyError):
+        profile = {}
+    bucket = profile.get("gcp", {}).get("warehouse_bucket")
     if not bucket:
         raise RuntimeError(
             "GCP warehouse bucket not configured. Run: dcf gcp setup --project-id ... --region ..."

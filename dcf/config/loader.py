@@ -27,7 +27,7 @@ def _resolve_env(
 
     Resolution order:
       1. OS environment variable
-      2. project.yml key (VAR lowercased, e.g. PORTLANDMAPS_API_KEY → portlandmaps_api_key)
+      2. .env file key (VAR lowercased, e.g. PORTLANDMAPS_API_KEY → portlandmaps_api_key)
       3. on_missing callback (if provided), which may prompt the user
     """
     import re
@@ -43,7 +43,7 @@ def _resolve_env(
                 return resolved
             raise EnvironmentError(
                 f"'{var}' is not set — add it as an environment variable "
-                f"or set '{var.lower()}' in project.yml"
+                f"or set '{var.lower()}' in .env"
             )
         return resolved
     return re.sub(r"\{\{\s*env\.(\w+)\s*\}\}", replacer, value)
