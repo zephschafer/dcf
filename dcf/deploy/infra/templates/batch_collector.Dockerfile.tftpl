@@ -5,10 +5,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 %{ endif ~}
 WORKDIR /app
 COPY pyproject.toml .
-COPY ddt/ ./ddt/
+COPY dcf/ ./dcf/
 RUN pip install --no-cache-dir -e .
-COPY pipelines/ ./pipelines/
+COPY collectors/ ./collectors/
 COPY connectors/ ./connectors/
 COPY project.yml .
-ENV PIPELINE_NAME=""
-CMD ["sh", "-c", "ddt run $PIPELINE_NAME"]
+ENV COLLECTOR_NAME=""
+CMD ["sh", "-c", "dcf run $COLLECTOR_NAME"]
