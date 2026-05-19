@@ -79,13 +79,8 @@ jira_domain: yourorg.atlassian.net
 
 ## Publishing your own collector
 
-**YAML-only** (simple REST APIs): open a PR to [dcf-hub](https://github.com/zephschafer/dcf-hub) with your `collectors/<name>.yml`.
+Choose the path that fits your use case:
 
-**Python-backed** (complex auth or pagination): publish a `dcf-<name>` package on PyPI. Ship your YAML template and register it via entry points:
-
-```toml
-[project.entry-points."dcf.collectors"]
-myconnector = "dcf_myconnector:get_collector_yaml"
-```
-
-where `get_collector_yaml` is a callable that returns the YAML string.
+- [Contributing a hub collector](contributing-hub-collector.md) — YAML only, open a PR to dcf-hub
+- [Publishing a GitHub repo collector](contributing-github-collector.md) — share in your own repo, no approval needed
+- [Publishing a PyPI package](contributing-pypi-collector.md) — Python-backed connectors with custom auth or pagination
