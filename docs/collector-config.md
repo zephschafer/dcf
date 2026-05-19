@@ -16,12 +16,6 @@ source:
   url: https://api.github.com/repos/
        my-org/my-repo/commits
   params:
-    - name: since
-      type: date
-      format: "%Y-%m-%dT%H:%M:%SZ"
-    - name: until
-      type: date
-      format: "%Y-%m-%dT%H:%M:%SZ"
     - name: per_page
       value: 100
   schema:
@@ -39,6 +33,7 @@ cadence:
   iterate:
     - type: date_range
       params: [since, until]
+      format: "%Y-%m-%dT%H:%M:%SZ"
       start: "2024-01-01"
       end: today
       step: 7 days
@@ -123,9 +118,6 @@ source:
     - name: per_page
       type: integer
       value: 100
-    - name: since
-      type: date
-      format: "%Y-%m-%dT%H:%M:%SZ" # serialization format for date params
   response:
     format: json                   # json or csv
     records_path: data.items       # dot-path to the records array; omit for top-level array
@@ -150,7 +142,7 @@ source:
 | `header`      | `key`, `value`      | Sends an arbitrary header                |
 | `query_param` | `key`, `value`      | Appends `?key=value` to the URL          |
 
-**Param types:** `string`, `integer`, `float`, `date`, `boolean`. For `date` params, supply a `format` string to control serialization (e.g. `"%m/%d/%Y"`). Params without a `value` must be covered by a `cadence.iterate` axis.
+**Param types:** `string`, `integer`, `float`, `date`, `boolean`. Params without a `value` are injected by a `cadence.iterate` axis.
 
 ### `python`
 
@@ -318,11 +310,12 @@ cadence:
   primary_key: id
   iterate:
     - type: date_range
-      params: [since, until]   # one param: receives window start; two params: start and end
-      start: "2023-01-01"      # ISO date or "today"
+      params: [since, until]          # one param: receives window start; two params: start and end
+      format: "%Y-%m-%dT%H:%M:%SZ"   # strftime format for serialization; defaults to ISO date
+      start: "2023-01-01"             # ISO date or "today"
       end: today
-      step: 7 days             # how far to advance each iteration
-      window: 7 days           # size of each window; defaults to step
+      step: 7 days                    # how far to advance each iteration
+      window: 7 days                  # size of each window; defaults to step
 ```
 
 Supported duration formats: `N day(s)`, `N week(s)`, `N month(s)` (one month = 30 days).
@@ -446,12 +439,6 @@ source:
     - name: sha
       type: string
       value: main             # static param — same on every request
-    - name: since
-      type: date
-      format: "%Y-%m-%dT%H:%M:%SZ"   # GitHub expects ISO 8601
-    - name: until
-      type: date
-      format: "%Y-%m-%dT%H:%M:%SZ"
     - name: per_page
       type: integer
       value: 100
@@ -483,10 +470,11 @@ cadence:
   primary_key: sha            # upsert on commit SHA — reruns won't create duplicates
   iterate:
     - type: date_range
-      params: [since, until]  # since gets window start, until gets window end
+      params: [since, until]          # since gets window start, until gets window end
+      format: "%Y-%m-%dT%H:%M:%SZ"   # GitHub expects ISO 8601
       start: "2023-01-01"
       end: today
-      step: 7 days            # one request per week
+      step: 7 days                    # one request per week
 
 deployment:
   type: batch

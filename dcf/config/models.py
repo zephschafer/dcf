@@ -14,7 +14,6 @@ _CRON_FIELD_RE = _re.compile(r'^(\*|[0-9,\-\*/]+)$')
 class Param(BaseModel):
     name: str
     type: Literal["string", "integer", "float", "date", "boolean"]
-    format: str | None = None   # e.g. "%m/%d/%Y" for date URL serialization
     value: Any | None = None    # present → static; absent → must be covered by iterate
 
 
@@ -46,10 +45,11 @@ class Response(BaseModel):
 
 class DateRangeIterate(BaseModel):
     type: Literal["date_range"]
-    params: list[str]       # one or two param names that receive the window start/end
-    start: str              # ISO date or "today"
-    end: str                # ISO date or "today"
-    step: str               # e.g. "1 day", "7 days"
+    params: list[str]          # one or two param names that receive the window start/end
+    format: str | None = None  # strftime format for date serialization; defaults to ISO
+    start: str                 # ISO date or "today"
+    end: str                   # ISO date or "today"
+    step: str                  # e.g. "1 day", "7 days"
     window: str | None = None  # defaults to step when absent
 
 

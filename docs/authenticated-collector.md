@@ -46,10 +46,6 @@ source:
     - name: per_page
       type: integer
       value: 100
-    - name: since
-      type: string
-    - name: until
-      type: string
   schema:
     columns:
       - name: sha
@@ -103,10 +99,6 @@ source:
   params:
     - name: per_page
       value: 100
-    - name: since
-      type: string
-    - name: until
-      type: string
   schema:
     columns:
       - name: sha

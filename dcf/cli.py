@@ -116,12 +116,9 @@ source:
     - name: site
       type: string
       value: stackoverflow
-    - name: fromdate
+    - name: tagged
       type: string
-      format: "%s"
-    - name: todate
-      type: string
-      format: "%s"
+      value: "python;data-engineering"
   schema:
     columns:
       - name: question_id
@@ -140,6 +137,7 @@ cadence:
   iterate:
     - type: date_range
       params: [fromdate, todate]
+      format: "%s"
       start: "2025-01-01"
       end: today
       step: 30 days

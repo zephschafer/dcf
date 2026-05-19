@@ -56,8 +56,7 @@ def run_collector(
     limit: int | None = None,
     param_overrides: dict | None = None,
 ) -> None:
-    param_defs = {p.name: p for p in collector.source.params}
-    request_sequence = build_request_sequence(collector.cadence.iterate, param_defs)
+    request_sequence = build_request_sequence(collector.cadence.iterate)
 
     if limit is not None:
         request_sequence = request_sequence[:limit]
