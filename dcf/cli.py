@@ -97,7 +97,6 @@ description: Stack Overflow questions tagged python and data-engineering.
 source:
   type: http
   url: https://api.stackexchange.com/2.3/questions
-  method: GET
   response:
     records_path: items
   params:

@@ -70,7 +70,6 @@ description: Commits to the dcf repository.
 source:
   type: http
   url: https://api.github.com/repos/zephschafer/dcf/commits
-  method: GET
   params:
     - name: sha
       type: string

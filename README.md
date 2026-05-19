@@ -58,7 +58,6 @@ namespace: stackoverflow
 source:
   type: http
   url: https://api.stackexchange.com/2.3/questions
-  method: GET
   response:
     records_path: items
   params:
