@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 *.egg-info/
 dist/
+build/
 .claude/settings.json
 testing/test_config.yml
 testing/runs/*/quipu/

@@ -22,15 +22,12 @@ _MAX_ROWS = 500
 _WRITE_PREFIXES = {"copy", "create", "insert", "drop", "delete", "update", "alter"}
 
 
-def _project_config() -> dict:
-    import yaml
-    from .project import find_project_root
-    cfg_file = find_project_root() / "project.yml"
-    return yaml.safe_load(cfg_file.read_text()) if cfg_file.exists() else {}
-
-
 def _catalog() -> str:
-    return _project_config().get("catalog", "local")
+    try:
+        from .state import get_catalog
+        return get_catalog()
+    except RuntimeError:
+        return "local"
 
 
 def _warehouse() -> Path:
@@ -39,7 +36,13 @@ def _warehouse() -> Path:
 
 
 def _gcs_bucket() -> str:
-    return _project_config().get("gcp", {}).get("warehouse_bucket", "")
+    from .state import get_active_profile_name
+    from .profiles import load_profile
+    try:
+        profile = load_profile(get_active_profile_name())
+        return profile.get("warehouse_bucket", "")
+    except (FileNotFoundError, KeyError, RuntimeError):
+        return ""
 
 
 def _iter_gcs_tables(bucket_name: str) -> list[tuple[str, str]]:
