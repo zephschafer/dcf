@@ -1,6 +1,6 @@
-# Pipeline Config Reference
+# collector Config Reference
 
-A pipeline config supports the construction of a data request pattern. From it, dcf assembles the actual API calls, executes them at the cadence you define, projects the results through a schema, and writes them to the warehouse.
+A collector config supports the construction of a data request pattern. From it, dcf assembles the actual API calls, executes them at the cadence you define, projects the results through a schema, and writes them to the warehouse.
 
 ### Example
 
@@ -8,7 +8,7 @@ A pipeline config supports the construction of a data request pattern. From it, 
 <tr>
 <td valign="top" width="46%">
 
-**config** (`pipelines/github_commits.yml`)
+**config** (`collectors/github_commits.yml`)
 
 ```yaml
 source:
@@ -80,7 +80,7 @@ Jan 2024 [·  ·  ·  ·  ·  ·  ·  ·  ·  ·] May 2026
 </tr>
 </table>
 
-A pipeline config has three primary sections:
+A collector config has three primary sections:
 
 - **`source`** — where to fetch data from (HTTP API, Python function, or Pub/Sub), including the `schema` that defines which fields to extract
 - **`cadence`** — how many requests to make and how to store the results (iteration axes + write strategy)
@@ -92,8 +92,8 @@ A pipeline config has three primary sections:
 
 | Field         | Type   | Description                                                                 |
 |---------------|--------|-----------------------------------------------------------------------------|
-| `name`        | string | Pipeline identifier. Becomes the warehouse table name.                      |
-| `namespace`   | string | Groups related pipelines. Maps to a warehouse schema/folder.                |
+| `name`        | string | collector identifier. Becomes the warehouse table name.                      |
+| `namespace`   | string | Groups related collectors. Maps to a warehouse schema/folder.                |
 | `description` | string | Human-readable summary. Optional but recommended.                           |
 
 ---
@@ -270,7 +270,7 @@ Use a `transform` block instead of `path` for derived columns.
 
 ## `cadence` — iteration and write strategy
 
-The `cadence` block describes the complete rhythm of the pipeline: how many requests to make (via `iterate`) and how to persist the results (via `strategy`).
+The `cadence` block describes the complete rhythm of the collector: how many requests to make (via `iterate`) and how to persist the results (via `strategy`).
 
 ```yaml
 cadence:
@@ -296,7 +296,7 @@ cadence:
 
 dcf automatically adds a `dcf_updated_at` column (ISO timestamp, Pacific time) to every write.
 
-### `iterate` — splitting one pipeline into many requests
+### `iterate` — splitting one collector into many requests
 
 The `iterate` sub-key lists one or more axes. Multiple axes produce a Cartesian product — every combination is requested. Without `iterate`, dcf makes exactly one request.
 
@@ -354,7 +354,7 @@ cadence:
 
 ### Staging and merge (advanced)
 
-For pipelines that write to multiple staging tables before merging into a final table, `cadence` supports optional `staging` and `merge` blocks. See the examples in `testing/` for usage.
+For collectors that write to multiple staging tables before merging into a final table, `cadence` supports optional `staging` and `merge` blocks. See the examples in `testing/` for usage.
 
 ---
 
@@ -375,13 +375,13 @@ deployment:
 
 `streaming` requires `source.type: pubsub` and `cadence.strategy: append`.
 
-Omitting the `deployment` block makes the pipeline manual-only (run with `dcf run`).
+Omitting the `deployment` block makes the collector manual-only (run with `dcf run`).
 
 ---
 
 ## Execution lifecycle
 
-When you run a pipeline, dcf executes four phases in order.
+When you run a collector, dcf executes four phases in order.
 
 **1. Expand**
 
@@ -421,7 +421,7 @@ Terminal output during a run looks like:
 
 ## Worked example
 
-A complete pipeline that fetches GitHub commits week-by-week and upserts them into the warehouse.
+A complete collector that fetches GitHub commits week-by-week and upserts them into the warehouse.
 
 ```yaml
 name: github_commits          # → warehouse table name
