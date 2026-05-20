@@ -12,9 +12,9 @@ uvx --from dcf-core dcf init
 
 ## How it works
 
-1. **Define** a [data collector in YAML](#example) — source, schema, cadence
+1. **Define** a [data collector in YAML](#example) for any http data source
 2. **Run** it with `dcf run`
-3. **Query** data from your data lake
+3. **Query** your new data
 
 ---
 
