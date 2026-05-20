@@ -1,4 +1,4 @@
-# collector Config Reference
+# Collector Config Reference
 
 A collector config supports the construction of a data request pattern. From it, dcf assembles the actual API calls, executes them at the cadence you define, projects the results through a schema, and writes them to the warehouse.
 
