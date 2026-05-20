@@ -103,6 +103,7 @@ uv run dcf query 'SELECT * FROM stackoverflow.so_questions LIMIT 5'
 
 ## More features
 
+- [Create a collector with Claude Code](docs/create-a-new-collector-w-claude.md) — `/new-collector` skill, installed by `dcf init`
 - [Importing collectors from dcf-hub, GitHub, or PyPI](docs/collector-import.md) — `dcf import`
 - [Authenticated collectors](docs/authenticated-collector.md) — bearer tokens, API keys, `{{ env.VAR }}`
 - [Collector config reference](docs/collector-config.md) — full YAML field reference

@@ -9,6 +9,8 @@ mkdir my-project && cd my-project
 uvx --from dcf-core dcf init
 ```
 
+> **Using Claude Code?** Run `/new-collector` — the interactive skill installed by `dcf init`. [Learn more](create-a-new-collector-w-claude.md)
+
 ---
 
 ## 1. Create the file
