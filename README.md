@@ -1,10 +1,8 @@
-# dcf
+# dcf -- D.ata C.ollection F.ramework
 
 [![PyPI](https://img.shields.io/pypi/v/dcf-core)](https://pypi.org/project/dcf-core/)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://pypi.org/project/dcf-core/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/zephschafer/dcf/blob/main/LICENSE)
-
-D.ata C.ollection F.ramework
 
 ```bash
 uvx --from dcf-core dcf init
