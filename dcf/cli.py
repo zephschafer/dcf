@@ -181,6 +181,15 @@ def init():
         profiles.write_text(_PROFILES_YML_TEMPLATE)
         created.append("profiles.yml")
 
+    claude_commands = root / ".claude" / "commands"
+    claude_commands.mkdir(parents=True, exist_ok=True)
+    skill_dest = claude_commands / "new-collector.md"
+    if not skill_dest.exists():
+        import importlib.resources as resources
+        skill_content = resources.files("dcf").joinpath("skills/new-collector.md").read_text()
+        skill_dest.write_text(skill_content)
+        created.append(".claude/commands/new-collector.md")
+
     if created:
         typer.echo(f"Created: {', '.join(created)}")
     typer.echo("\nNext steps:")

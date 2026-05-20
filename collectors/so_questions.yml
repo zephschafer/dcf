@@ -1,0 +1,37 @@
+name: so_questions
+namespace: stackoverflow
+
+source:
+  type: http
+  url: https://api.stackexchange.com/2.3/questions
+  response:
+    records_path: items
+  params:
+    - name: site
+      type: string
+      value: stackoverflow
+    - name: tagged
+      type: string
+      value: "python;data-engineering"
+  schema:
+    columns:
+      - name: question_id
+        path: question_id
+        type: integer
+      - name: title
+        path: title
+        type: string
+      - name: creation_date
+        path: creation_date
+        type: integer
+
+cadence:
+  strategy: incremental
+  primary_key: question_id
+  iterate:
+    - type: date_range
+      params: [fromdate, todate]
+      format: "%s"
+      start: "2025-01-01"
+      end: today
+      step: 30 days

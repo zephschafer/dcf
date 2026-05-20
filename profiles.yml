@@ -1,0 +1,6 @@
+# Cloud deployment target. Commit this file — it contains no secrets.
+# Credentials come from: gcloud auth application-default login
+default:
+  type: gcp
+  project_name: my-dcf-project
+  region: us-central1
