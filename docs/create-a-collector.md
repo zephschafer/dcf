@@ -5,8 +5,8 @@ A collector is a YAML file that defines a data source, a schema, and a cadence. 
 Make sure you're in a dcf project. If you haven't set one up yet:
 
 ```bash
+mkdir my-project && cd my-project
 uvx --from dcf-core dcf init
-cd my-project
 ```
 
 See the [quickstart](../QUICKSTART.md) for a full walkthrough.
