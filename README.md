@@ -21,12 +21,12 @@ uvx --from dcf-core dcf init
 ---
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=sGJ7pp-Ws_k" style="font-size: 1.25em; font-weight: bold; text-decoration: none;">
-    ▶️ Video Tutorial: Run a DCF Collector with GitHub API
+  <a href="https://www.youtube.com/watch?v=CeJj3yc6HaI" style="font-size: 1.25em; font-weight: bold; text-decoration: none;">
+    ▶️ Video Tutorial: Use DCF to Query Public APIs
   </a>
   <br><br>
-  <a href="https://www.youtube.com/watch?v=sGJ7pp-Ws_k">
-    <img src="https://img.youtube.com/vi/sGJ7pp-Ws_k/maxresdefault.jpg" alt="Run a DCF Collector with GitHub API" width="75%">
+  <a href="https://www.youtube.com/watch?v=CeJj3yc6HaI">
+    <img src="https://img.youtube.com/vi/CeJj3yc6HaI/maxresdefault.jpg" alt="Use DCF to Query Public APIs" width="75%">
   </a>
 </p>
 
