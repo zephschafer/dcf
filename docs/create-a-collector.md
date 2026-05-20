@@ -2,14 +2,12 @@
 
 A collector is a YAML file that defines a data source, a schema, and a cadence. dcf handles the fetching, projecting, and writing.
 
-Make sure you're in a dcf project. If you haven't set one up yet:
+**Prerequisites:** You need a dcf project. If you haven't started one, see the [quickstart](../QUICKSTART.md) or run:
 
 ```bash
 mkdir my-project && cd my-project
 uvx --from dcf-core dcf init
 ```
-
-See the [quickstart](../QUICKSTART.md) for a full walkthrough.
 
 ---
 
