@@ -16,15 +16,13 @@ uvx --from dcf-core dcf init
 2. **Run** it with `dcf run`
 3. **Query** your new data
 
----
-
 <p align="center">
   <a href="https://www.youtube.com/watch?v=CeJj3yc6HaI" style="font-size: 1.25em; font-weight: bold; text-decoration: none;">
     ▶️ Video Tutorial: Use DCF to Query Public APIs
   </a>
   <br><br>
   <a href="https://www.youtube.com/watch?v=CeJj3yc6HaI">
-    <img src="https://img.youtube.com/vi/CeJj3yc6HaI/maxresdefault.jpg" alt="Use DCF to Query Public APIs" width="75%">
+    <img src="https://img.youtube.com/vi/CeJj3yc6HaI/maxresdefault.jpg" alt="Use DCF to Query Public APIs" width="50%">
   </a>
 </p>
 
