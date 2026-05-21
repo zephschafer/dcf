@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[mGKHJF]')
@@ -850,24 +851,40 @@ def undeploy(
     if collector_name is None:
         catalog = _get_catalog()
         is_gcp = catalog == "gcp" and profile.get("setup_status") in ("complete", "failed")
+        project_root = _project_root()
+        warehouse_path = project_root / "warehouse"
+        has_local_warehouse = catalog == "local" and warehouse_path.exists()
 
-        if not all_deps and not is_gcp:
+        if not all_deps and not is_gcp and not has_local_warehouse:
             typer.echo("Nothing to undeploy.")
             return
 
         if not yes:
-            msg = f"Destroy all {len(all_deps)} collector deployment(s)"
-            if is_gcp:
-                msg += " and all GCP lake infrastructure (warehouse bucket, service account, secrets)"
-            typer.confirm(msg + "?", abort=True)
+            if catalog == "local":
+                parts = []
+                if all_deps:
+                    parts.append(f"stop all {len(all_deps)} local deployment(s)")
+                if has_local_warehouse:
+                    parts.append("permanently delete the local warehouse directory (all collected data will be lost)")
+                typer.confirm("This will " + " and ".join(parts) + ". Proceed?", abort=True)
+            else:
+                msg = f"Destroy all {len(all_deps)} collector deployment(s)"
+                if is_gcp:
+                    msg += " and all GCP lake infrastructure (warehouse bucket, service account, secrets)"
+                typer.confirm(msg + "?", abort=True)
 
         if catalog == "local":
             try:
                 from .deploy.local import deploy as local
-                local.undeploy_all(local_deps, _project_root())
+                local.undeploy_all(local_deps, project_root)
             except Exception as e:
                 typer.echo(f"\nUndeploy failed: {e}", err=True)
                 raise typer.Exit(1)
+
+            if has_local_warehouse:
+                typer.echo("Deleting local warehouse...")
+                shutil.rmtree(warehouse_path)
+                typer.echo("Local warehouse deleted.")
         else:
             for name, dep in list(gcp_deps.items()):
                 typer.echo(f"Undeploying '{name}'...")
@@ -881,7 +898,7 @@ def undeploy(
                         from .deploy.gcp import batch_deploy
                         batch_deploy.undeploy(
                             collector_name=name, deployment=dep,
-                            gcp_config=profile, project_root=_project_root(),
+                            gcp_config=profile, project_root=project_root,
                         )
                 except Exception as e:
                     typer.echo(f"  failed (continuing): {e}", err=True)
