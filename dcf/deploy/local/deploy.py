@@ -734,8 +734,22 @@ def _undeploy_streaming(collector_name: str, state: dict) -> None:
 
 def _check_docker() -> None:
     result = subprocess.run(["docker", "info"], capture_output=True)
-    if result.returncode != 0:
-        raise RuntimeError("Docker is not running. Start Docker Desktop and retry.")
+    if result.returncode == 0:
+        return
+
+    import platform
+    if platform.system() == "Darwin":
+        print("  Docker is not running — starting Docker Desktop...", flush=True)
+        subprocess.run(["open", "-a", "Docker"], check=False)
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            time.sleep(3)
+            if subprocess.run(["docker", "info"], capture_output=True).returncode == 0:
+                print("  Docker is ready.", flush=True)
+                return
+        raise RuntimeError("Docker Desktop did not start within 60s. Start it manually and retry.")
+
+    raise RuntimeError("Docker is not running. Start Docker and retry.")
 
 
 def _stop_remove(container_name: str) -> None:
