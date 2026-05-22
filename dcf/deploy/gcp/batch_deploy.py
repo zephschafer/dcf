@@ -11,6 +11,7 @@ import os
 import secrets
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -470,7 +471,13 @@ def _ensure_artifact_registry_repo(project_id: str, region: str) -> None:
         ],
         capture_output=True,
     )
-    if check.returncode != 0:
+    if check.returncode == 0:
+        return
+
+    # Retry up to ~60s: Artifact Registry API may not be fully propagated
+    # immediately after `gcloud services enable` returns.
+    last_err = ""
+    for attempt in range(12):
         result = subprocess.run(
             [
                 "gcloud", "artifacts", "repositories", "create", "dcf-runner",
@@ -480,12 +487,18 @@ def _ensure_artifact_registry_repo(project_id: str, region: str) -> None:
             ],
             capture_output=True, text=True,
         )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to create Artifact Registry repository: {result.stderr}\n"
-                "Ensure the API is enabled:\n"
-                "  gcloud services enable artifactregistry.googleapis.com"
-            )
+        if result.returncode == 0:
+            return
+        last_err = result.stderr
+        if "PERMISSION_DENIED" in last_err and attempt < 11:
+            logger.info("Artifact Registry API not yet ready, retrying in 5s (attempt %d/12)...", attempt + 1)
+            time.sleep(5)
+            continue
+        raise RuntimeError(
+            f"Failed to create Artifact Registry repository: {last_err}\n"
+            "Ensure the API is enabled:\n"
+            "  gcloud services enable artifactregistry.googleapis.com"
+        )
 
 
 # ------------------------------------------------------------------ #
