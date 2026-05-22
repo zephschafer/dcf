@@ -30,7 +30,12 @@ variable "sa_email" {
 
 variable "warehouse_bucket" {
   type        = string
-  description = "GCS bucket where DAGs are stored at airflow/dags/"
+  description = "GCS data warehouse bucket (used for IAM grants)"
+}
+
+variable "dags_bucket" {
+  type        = string
+  description = "GCS bucket dedicated to Airflow DAGs (mounted at /opt/airflow/dags)"
 }
 
 variable "db_password" {

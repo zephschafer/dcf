@@ -133,6 +133,18 @@ def create_warehouse_bucket(project_id: str, region: str, credentials: Credentia
     return bucket_name
 
 
+def create_dags_bucket(project_id: str, region: str, credentials: Credentials) -> str:
+    """Create the GCS bucket used for Airflow DAGs. Returns bucket name."""
+    bucket_name = f"dcf-dags-{project_id}"
+    client = storage.Client(project=project_id, credentials=credentials)
+    try:
+        client.create_bucket(bucket_name, location=region)
+        logger.info("Created DAGs bucket %s", bucket_name)
+    except Conflict:
+        logger.info("DAGs bucket %s already exists", bucket_name)
+    return bucket_name
+
+
 def create_service_account(project_id: str, credentials: Credentials) -> str:
     """Create the dcf-lake service account. Returns SA email."""
     sa_email = f"{_SA_ACCOUNT_ID}@{project_id}.iam.gserviceaccount.com"

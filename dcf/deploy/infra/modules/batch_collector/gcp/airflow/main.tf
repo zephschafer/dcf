@@ -107,7 +107,7 @@ resource "google_cloud_run_v2_service" "airflow" {
     volumes {
       name = "dags"
       gcs {
-        bucket    = var.warehouse_bucket
+        bucket    = var.dags_bucket
         read_only = true
       }
     }

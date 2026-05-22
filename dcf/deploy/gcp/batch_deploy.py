@@ -88,6 +88,7 @@ def deploy(
     project_id = gcp_config["project_id"]
     region = gcp_config["region"]
     warehouse_bucket = gcp_config["warehouse_bucket"]
+    dags_bucket = gcp_config.get("dags_bucket") or warehouse_bucket
     sa_email = gcp_config["sa_email"]
 
     image_uri = _image_uri(project_id, region, collector_name)
@@ -125,7 +126,7 @@ def deploy(
         region=region,
         job_name=job_name,
     )
-    _write_dag_gcs(dag_content, collector_name, warehouse_bucket)
+    _write_dag_gcs(dag_content, collector_name, dags_bucket)
 
     print(f"  Provisioning GCP Airflow stack...", flush=True)
     credentials = _generate_airflow_credentials(project_root)
@@ -156,15 +157,15 @@ def undeploy(collector_name: str, deployment: dict, gcp_config: dict, project_ro
     """Remove the Cloud Run job via Terraform destroy and delete the DAG from GCS."""
     project_id = gcp_config["project_id"]
     region = gcp_config["region"]
-    warehouse_bucket = gcp_config["warehouse_bucket"]
+    dags_bucket = gcp_config.get("dags_bucket") or gcp_config["warehouse_bucket"]
 
     print(f"  Destroying Terraform resources for '{collector_name}'...", flush=True)
     _terraform_destroy_collector(collector_name, project_id, region, project_root)
 
     print(f"  Deleting DAG from GCS...", flush=True)
-    _delete_dag_gcs(collector_name, warehouse_bucket)
+    _delete_dag_gcs(collector_name, dags_bucket)
 
-    if not _gcs_dag_files_exist(warehouse_bucket):
+    if not _gcs_dag_files_exist(dags_bucket):
         print(f"  No remaining DAGs — tearing down Airflow stack...", flush=True)
         _tf_destroy_airflow_gcp(project_root)
 
@@ -404,7 +405,7 @@ def _tf_import_if_exists(
 # ------------------------------------------------------------------ #
 
 def _dag_gcs_path(collector_name: str) -> str:
-    return f"airflow/dags/{collector_name}.py"
+    return f"{collector_name}.py"
 
 
 def _gcp_dag_content(
@@ -577,6 +578,7 @@ def _tf_apply_airflow_gcp(
         "region": gcp_config["region"],
         "sa_email": gcp_config["sa_email"],
         "warehouse_bucket": gcp_config["warehouse_bucket"],
+        "dags_bucket": gcp_config.get("dags_bucket") or gcp_config["warehouse_bucket"],
         "db_password": credentials["db_password"],
         "admin_password": credentials["admin_password"],
         "fernet_key": credentials["fernet_key"],

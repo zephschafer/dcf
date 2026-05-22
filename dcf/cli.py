@@ -650,6 +650,15 @@ def _ensure_gcp_provisioned(profile: dict) -> None:
                     err=True,
                 )
                 raise typer.Exit(1)
+        if not gcp.get("dags_bucket"):
+            try:
+                from .deploy.gcp.gcloud import get_credentials as _gc
+                from .deploy.gcp import bootstrap as _bs
+                creds = _gc()
+                gcp["dags_bucket"] = _bs.create_dags_bucket(gcp["project_id"], gcp["region"], creds)
+                _save_gcp_state(gcp)
+            except Exception as e:
+                typer.echo(f"[dcf] Warning: could not create DAGs bucket: {e}", err=True)
         return
 
     project_name = profile.get("project_name", "")
@@ -702,10 +711,12 @@ def _ensure_gcp_provisioned(profile: dict) -> None:
         key_data         = bootstrap.create_service_account_key(project_id, sa_email, credentials)
         secret_name      = bootstrap.store_key_in_secret_manager(project_id, key_data, credentials)
         warehouse_bucket = bootstrap.create_warehouse_bucket(project_id, region, credentials)
+        dags_bucket      = bootstrap.create_dags_bucket(project_id, region, credentials)
         gcp.update({
             "region": region,
             "sa_email": sa_email, "secret_name": secret_name,
             "tf_state_bucket": tf_state_bucket, "warehouse_bucket": warehouse_bucket,
+            "dags_bucket": dags_bucket,
             "setup_status": "complete", "setup_error": None,
         })
         _save_gcp_state(gcp)
