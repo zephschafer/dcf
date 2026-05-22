@@ -59,6 +59,11 @@ resource "google_cloud_run_v2_job" "collector" {
           value = var.collector_name
         }
 
+        env {
+          name  = "DCF_PROJECT_DIR"
+          value = "/app"
+        }
+
         resources {
           limits = {
             memory = "512Mi"

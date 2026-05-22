@@ -196,7 +196,9 @@ def _sync_build_context(
         else:
             dst.mkdir()
 
-    minimal_config = {
+    dcf_dir = build_context / ".dcf"
+    dcf_dir.mkdir(exist_ok=True)
+    state = {
         "catalog": "gcp",
         "gcp": {
             "project_id": gcp_config["project_id"],
@@ -204,8 +206,8 @@ def _sync_build_context(
             "warehouse_bucket": gcp_config["warehouse_bucket"],
         },
     }
-    (build_context / "project.yml").write_text(
-        yaml.dump(minimal_config, default_flow_style=False)
+    (dcf_dir / "state.yml").write_text(
+        yaml.dump(state, default_flow_style=False, sort_keys=False)
     )
 
     return build_context

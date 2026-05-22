@@ -9,6 +9,6 @@ COPY dcf/ ./dcf/
 RUN pip install --no-cache-dir -e .
 COPY collectors/ ./collectors/
 COPY connectors/ ./connectors/
-COPY project.yml .
+COPY .dcf/ ./.dcf/
 ENV COLLECTOR_NAME=""
 CMD ["sh", "-c", "dcf run $COLLECTOR_NAME"]
