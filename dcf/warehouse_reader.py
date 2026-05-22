@@ -36,12 +36,10 @@ def _warehouse() -> Path:
 
 
 def _gcs_bucket() -> str:
-    from .state import get_active_profile_name
-    from .profiles import load_profile
+    from .state import load_state
     try:
-        profile = load_profile(get_active_profile_name())
-        return profile.get("warehouse_bucket", "")
-    except (FileNotFoundError, KeyError, RuntimeError):
+        return load_state().get("gcp", {}).get("warehouse_bucket", "")
+    except RuntimeError:
         return ""
 
 
