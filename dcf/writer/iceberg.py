@@ -12,12 +12,8 @@ from ..config.models import Collector, StagingConfig, MergeConfig
 
 
 def _gcs_warehouse_bucket() -> str:
-    from ..profiles import load_profile
-    try:
-        profile = load_profile("default")
-    except (FileNotFoundError, KeyError):
-        profile = {}
-    bucket = profile.get("gcp", {}).get("warehouse_bucket")
+    from ..state import load_state
+    bucket = load_state().get("gcp", {}).get("warehouse_bucket")
     if not bucket:
         raise RuntimeError(
             "GCP warehouse bucket not configured. Run: dcf gcp setup --project-id ... --region ..."
