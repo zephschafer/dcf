@@ -56,6 +56,16 @@ def _save_state(state: dict) -> None:
     save_state(state)
 
 
+def _load_gcp_state() -> dict:
+    return _load_state().get("gcp") or {}
+
+
+def _save_gcp_state(gcp: dict) -> None:
+    st = _load_state()
+    st["gcp"] = gcp
+    _save_state(st)
+
+
 def _prompt_for_missing_var(var: str) -> str:
     import sys
     if not sys.stdin.isatty():
@@ -386,10 +396,10 @@ def gcp_setup(
     from .deploy.gcp import bootstrap, terraform
     from .deploy.gcp.gcloud import get_credentials
 
-    profile = _load_profile()
+    gcp = _load_gcp_state()
 
-    if profile.get("setup_status") in ("running", "complete"):
-        typer.echo(f"GCP setup already '{profile['setup_status']}'. Use --force to re-run.", err=True)
+    if gcp.get("setup_status") in ("running", "complete"):
+        typer.echo(f"GCP setup already '{gcp['setup_status']}'. Use --force to re-run.", err=True)
         raise typer.Exit(1)
 
     typer.echo("Checking Google credentials...")
@@ -400,8 +410,8 @@ def gcp_setup(
         raise typer.Exit(1)
     typer.echo("Credentials OK.")
 
-    profile.update({"project_id": project_id, "region": region, "setup_status": "running"})
-    _save_profile(profile)
+    gcp.update({"project_id": project_id, "region": region, "setup_status": "running"})
+    _save_gcp_state(gcp)
 
     try:
         typer.echo("Creating Terraform state bucket...")
@@ -417,14 +427,9 @@ def gcp_setup(
         secret_name = bootstrap.store_key_in_secret_manager(project_id, key_data, credentials)
 
         typer.echo("Provisioning lake infrastructure (terraform apply)...")
-        warehouse_bucket = terraform.provision(
-            project_id=project_id,
-            region=region,
-            sa_email=sa_email,
-            tf_state_bucket=tf_state_bucket,
-        )
+        warehouse_bucket = bootstrap.create_warehouse_bucket(project_id, region, credentials)
 
-        profile.update({
+        gcp.update({
             "sa_email": sa_email,
             "secret_name": secret_name,
             "tf_state_bucket": tf_state_bucket,
@@ -432,7 +437,7 @@ def gcp_setup(
             "setup_status": "complete",
             "setup_error": None,
         })
-        _save_profile(profile)
+        _save_gcp_state(gcp)
         state = _load_state()
         state["catalog"] = "gcp"
         state["active_profile"] = _active_profile_name()
@@ -443,8 +448,8 @@ def gcp_setup(
         typer.echo(f"  Service account:  {sa_email}")
 
     except Exception as e:
-        profile.update({"setup_status": "failed", "setup_error": _ANSI_RE.sub("", str(e))})
-        _save_profile(profile)
+        gcp.update({"setup_status": "failed", "setup_error": _ANSI_RE.sub("", str(e))})
+        _save_gcp_state(gcp)
         typer.echo(f"\nSetup failed: {e}", err=True)
         raise typer.Exit(1)
 
@@ -498,13 +503,13 @@ def gcp_teardown(
     """Destroy GCP lake resources (warehouse bucket, service account, Secret Manager secret)."""
     from .deploy.gcp.gcloud import get_credentials
 
-    profile = _load_profile()
+    gcp = _load_gcp_state()
 
-    if profile.get("setup_status") not in ("complete", "failed"):
-        typer.echo("No completed GCP setup found in profiles.yml. Nothing to tear down.")
+    if gcp.get("setup_status") not in ("complete", "failed"):
+        typer.echo("No completed GCP setup found. Nothing to tear down.")
         return
 
-    project_id = profile.get("project_id", "")
+    project_id = gcp.get("project_id", "")
     if not yes:
         typer.confirm(
             f"This will destroy all GCP resources for project '{project_id}'. Continue?",
@@ -517,13 +522,10 @@ def gcp_teardown(
         typer.echo(str(e), err=True)
         raise typer.Exit(1)
 
-    destroyed = _gcp_teardown_lake(profile, credentials)
+    destroyed = _gcp_teardown_lake(gcp, credentials)
 
-    for key in ("project_id", "setup_status", "setup_error", "sa_email",
-                "secret_name", "tf_state_bucket", "warehouse_bucket", "deployments"):
-        profile.pop(key, None)
-    _save_profile(profile)
     state = _load_state()
+    state.pop("gcp", None)
     state["catalog"] = "local"
     state.pop("active_profile", None)
     _save_state(state)
@@ -537,19 +539,19 @@ def gcp_teardown(
 @gcp_app.command("status")
 def gcp_status():
     """Show GCP lake setup status."""
-    profile = _load_profile()
+    gcp = _load_gcp_state()
 
-    if not profile.get("setup_status"):
-        typer.echo("No GCP configuration found. Run: dcf gcp setup --project-id X --region Y")
+    if not gcp.get("setup_status"):
+        typer.echo("No GCP configuration found. Run: dcf deploy")
         return
 
-    typer.echo(f"Status:           {profile.get('setup_status', 'unknown')}")
-    typer.echo(f"Project ID:       {profile.get('project_id', '-')}")
-    typer.echo(f"Region:           {profile.get('region', '-')}")
-    typer.echo(f"Warehouse bucket: {profile.get('warehouse_bucket', '-')}")
-    typer.echo(f"Service account:  {profile.get('sa_email', '-')}")
-    if profile.get("setup_error"):
-        typer.echo(f"\nLast error:\n{profile['setup_error']}", err=True)
+    typer.echo(f"Status:           {gcp.get('setup_status', 'unknown')}")
+    typer.echo(f"Project ID:       {gcp.get('project_id', '-')}")
+    typer.echo(f"Region:           {gcp.get('region', '-')}")
+    typer.echo(f"Warehouse bucket: {gcp.get('warehouse_bucket', '-')}")
+    typer.echo(f"Service account:  {gcp.get('sa_email', '-')}")
+    if gcp.get("setup_error"):
+        typer.echo(f"\nLast error:\n{gcp['setup_error']}", err=True)
 
 
 # ------------------------------------------------------------------ #
@@ -557,7 +559,7 @@ def gcp_status():
 # ------------------------------------------------------------------ #
 
 def _require_gcp_config() -> dict:
-    """Return the active profile. Exits with a clear error if GCP is not ready."""
+    """Return GCP runtime state. Exits with a clear error if GCP is not ready."""
     if _get_catalog() != "gcp":
         typer.echo(
             "Error: catalog is not 'gcp'. Deployment requires a GCP data lake.\n"
@@ -565,29 +567,86 @@ def _require_gcp_config() -> dict:
             err=True,
         )
         raise typer.Exit(1)
-    profile = _load_profile()
-    if profile.get("setup_status") != "complete":
+    gcp = _load_gcp_state()
+    if gcp.get("setup_status") != "complete":
         typer.echo(
-            "Error: GCP setup is not complete. Run: dcf gcp setup --project-id X --region Y",
+            "Error: GCP setup is not complete. Run: dcf deploy",
             err=True,
         )
         raise typer.Exit(1)
     for key in ("project_id", "region", "warehouse_bucket", "sa_email"):
-        if not profile.get(key):
-            typer.echo(f"Error: {key} is missing from profiles.yml. Re-run: dcf gcp setup", err=True)
+        if not gcp.get(key):
+            typer.echo(f"Error: {key} is missing from state. Re-run: dcf deploy", err=True)
             raise typer.Exit(1)
-    return profile
+    return gcp
+
+
+def _preflight_gcp(project_name: str) -> None:
+    """Validate all prerequisites before GCP provisioning. Exits with clear errors."""
+    import shutil
+    from .deploy.gcp import gcloud as _gcloud
+
+    # 1. gcloud installed
+    if not _gcloud.is_gcloud_installed():
+        typer.echo(
+            "Error: gcloud CLI is not installed.\n"
+            f"  Install it at: https://cloud.google.com/sdk/docs/install\n"
+            "  Then run: gcloud auth login && gcloud auth application-default login",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    # 2. User authenticated
+    account = _gcloud.get_authenticated_account()
+    if not account:
+        typer.echo("[dcf] No gcloud account active — launching gcloud auth login...")
+        import subprocess
+        subprocess.run(["gcloud", "auth", "login"], check=True)
+        account = _gcloud.get_authenticated_account()
+        if not account:
+            typer.echo("Error: gcloud authentication failed.", err=True)
+            raise typer.Exit(1)
+    typer.echo(f"[dcf] Authenticated as {account}")
+
+    # 3. ADC configured
+    if not _gcloud.is_adc_configured():
+        typer.echo("[dcf] Application Default Credentials not set — launching gcloud auth application-default login...")
+        import subprocess
+        subprocess.run(["gcloud", "auth", "application-default", "login"], check=True)
+        if not _gcloud.is_adc_configured():
+            typer.echo("Error: ADC configuration failed.", err=True)
+            raise typer.Exit(1)
+
+    # 4. Billing account exists
+    billing = _gcloud.get_active_billing_account()
+    if not billing:
+        typer.echo(
+            "Error: No active billing account found.\n"
+            "  Create one at: https://console.cloud.google.com/billing\n"
+            "  Then re-run: dcf deploy",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    # 5. project_name configured
+    if not project_name or project_name == "my-dcf-project":
+        typer.echo(
+            "Error: set project_name in profiles.yml before deploying to GCP.\n"
+            "  Edit profiles.yml and change project_name from 'my-dcf-project' to your desired name.",
+            err=True,
+        )
+        raise typer.Exit(1)
 
 
 def _ensure_gcp_provisioned(profile: dict) -> None:
-    """Provision GCP lake if not already done, writing state to profiles.yml."""
-    stored = _load_profile()
+    """Provision GCP lake if not already done, writing state to .dcf/state.yml."""
+    gcp = _load_gcp_state()
 
-    if stored.get("setup_status") == "complete":
+    if gcp.get("setup_status") == "complete":
         for key in ("project_id", "region", "warehouse_bucket", "sa_email"):
-            if not stored.get(key):
+            if not gcp.get(key):
                 typer.echo(
-                    f"Error: {key} missing from profiles.yml. Re-run dcf deploy.",
+                    f"Error: {key} missing from state. Re-run dcf deploy.",
                     err=True,
                 )
                 raise typer.Exit(1)
@@ -595,11 +654,9 @@ def _ensure_gcp_provisioned(profile: dict) -> None:
 
     project_name = profile.get("project_name", "")
     region = profile.get("region", "")
-    if not project_name or project_name == "my-dcf-project":
-        typer.echo(
-            "Error: set project_name in profiles.yml before deploying to GCP.", err=True
-        )
-        raise typer.Exit(1)
+
+    typer.echo("[dcf] Checking prerequisites...")
+    _preflight_gcp(project_name)
 
     from .deploy.gcp.gcloud import get_credentials
     try:
@@ -608,9 +665,9 @@ def _ensure_gcp_provisioned(profile: dict) -> None:
         typer.echo(str(e), err=True)
         raise typer.Exit(1)
 
-    from .deploy.gcp import bootstrap, terraform
+    from .deploy.gcp import bootstrap
 
-    project_id = stored.get("project_id")
+    project_id = gcp.get("project_id")
     if project_id:
         typer.echo(f"[dcf] Resuming provisioning for existing project: {project_id}")
     else:
@@ -619,35 +676,43 @@ def _ensure_gcp_provisioned(profile: dict) -> None:
             typer.echo("[dcf] Creating GCP project...")
             project_id = bootstrap.create_project(project_name, credentials)
             typer.echo(f"[dcf] Project created: {project_id}")
+            typer.echo("[dcf] Linking billing account...")
+            bootstrap.link_billing_account(project_id, credentials)
+            typer.echo("[dcf] Billing linked.")
         except Exception as e:
             typer.echo(f"\n[dcf] Project creation failed: {e}", err=True)
             raise typer.Exit(1)
-        stored.update({"project_id": project_id, "region": region, "setup_status": "running"})
-        _save_profile(stored)
+        gcp.update({"project_id": project_id, "region": region, "setup_status": "running"})
+        _save_gcp_state(gcp)
         st = _load_state()
         st["catalog"] = "gcp"
         st["active_profile"] = _active_profile_name()
         _save_state(st)
 
     try:
+        typer.echo("[dcf] Enabling required GCP APIs...")
+        bootstrap.enable_required_apis(project_id, credentials)
+    except Exception as e:
+        typer.echo(f"\n[dcf] Failed to enable APIs: {e}", err=True)
+        raise typer.Exit(1)
+
+    try:
         tf_state_bucket  = bootstrap.create_state_bucket(project_id, region, credentials)
         sa_email         = bootstrap.create_service_account(project_id, credentials)
         key_data         = bootstrap.create_service_account_key(project_id, sa_email, credentials)
         secret_name      = bootstrap.store_key_in_secret_manager(project_id, key_data, credentials)
-        warehouse_bucket = terraform.provision(
-            project_id=project_id, region=region,
-            sa_email=sa_email, tf_state_bucket=tf_state_bucket,
-        )
-        stored.update({
+        warehouse_bucket = bootstrap.create_warehouse_bucket(project_id, region, credentials)
+        gcp.update({
+            "region": region,
             "sa_email": sa_email, "secret_name": secret_name,
             "tf_state_bucket": tf_state_bucket, "warehouse_bucket": warehouse_bucket,
             "setup_status": "complete", "setup_error": None,
         })
-        _save_profile(stored)
+        _save_gcp_state(gcp)
         typer.echo("[dcf] Lake provisioned.")
     except Exception as e:
-        stored.update({"setup_status": "failed", "setup_error": _ANSI_RE.sub("", str(e))})
-        _save_profile(stored)
+        gcp.update({"setup_status": "failed", "setup_error": _ANSI_RE.sub("", str(e))})
+        _save_gcp_state(gcp)
         typer.echo(f"\n[dcf] Provisioning failed: {e}", err=True)
         raise typer.Exit(1)
 
@@ -815,9 +880,9 @@ def _deploy_one(collector_name: str, profile_name: str = "default") -> None:
         typer.echo(f"\nDeploy failed: {e}", err=True)
         raise typer.Exit(1)
 
-    profile = _load_profile()
-    profile.setdefault("deployments", {})[collector_name] = state
-    _save_profile(profile)
+    gcp = _load_gcp_state()
+    gcp.setdefault("deployments", {})[collector_name] = state
+    _save_gcp_state(gcp)
 
     typer.echo(f"\nDeployed '{collector_name}' successfully.")
     if deploy_type == "streaming":
@@ -843,14 +908,14 @@ def undeploy(
     Omit COLLECTOR_NAME to destroy all deployments including the Airflow stack.
     """
     st = _load_state()
-    profile = _load_profile()
+    gcp = _load_gcp_state()
     local_deps = st.get("deployments", {})
-    gcp_deps = profile.get("deployments", {})
+    gcp_deps = gcp.get("deployments", {})
     all_deps = {**local_deps, **gcp_deps}
 
     if collector_name is None:
         catalog = _get_catalog()
-        is_gcp = catalog == "gcp" and profile.get("setup_status") in ("complete", "failed")
+        is_gcp = catalog == "gcp" and gcp.get("setup_status") in ("complete", "failed")
         project_root = _project_root()
         warehouse_path = project_root / "warehouse"
         has_local_warehouse = catalog == "local" and warehouse_path.exists()
@@ -892,13 +957,13 @@ def undeploy(
                     if dep.get("type") == "streaming":
                         from .deploy.gcp import streaming_deploy
                         streaming_deploy.undeploy(
-                            collector_name=name, deployment=dep, gcp_config=profile
+                            collector_name=name, deployment=dep, gcp_config=gcp
                         )
                     else:
                         from .deploy.gcp import batch_deploy
                         batch_deploy.undeploy(
                             collector_name=name, deployment=dep,
-                            gcp_config=profile, project_root=project_root,
+                            gcp_config=gcp, project_root=project_root,
                         )
                 except Exception as e:
                     typer.echo(f"  failed (continuing): {e}", err=True)
@@ -910,18 +975,16 @@ def undeploy(
             from .deploy.gcp.gcloud import get_credentials
             try:
                 credentials = get_credentials()
-                destroyed = _gcp_teardown_lake(profile, credentials)
+                destroyed = _gcp_teardown_lake(gcp, credentials)
                 if destroyed:
                     typer.echo(f"Lake torn down: {', '.join(destroyed)}.")
             except Exception as e:
                 typer.echo(f"\nLake teardown failed: {e}", err=True)
-            for key in ("project_id", "setup_status", "setup_error", "sa_email",
-                        "secret_name", "tf_state_bucket", "warehouse_bucket", "deployments"):
-                profile.pop(key, None)
-            _save_profile(profile)
-            st["catalog"] = "local"
-            st.pop("active_profile", None)
-            _save_state(st)
+            st2 = _load_state()
+            st2.pop("gcp", None)
+            st2["catalog"] = "local"
+            st2.pop("active_profile", None)
+            _save_state(st2)
 
         typer.echo("All collectors undeployed.")
         return
@@ -1002,11 +1065,8 @@ def undeploy(
         _save_state(st)
     else:
         gcp_deps.pop(collector_name, None)
-        if gcp_deps:
-            profile["deployments"] = gcp_deps
-        else:
-            profile.pop("deployments", None)
-        _save_profile(profile)
+        gcp["deployments"] = gcp_deps
+        _save_gcp_state(gcp)
 
     typer.echo(f"'{collector_name}' undeployed. Warehouse data is untouched.")
 
@@ -1017,8 +1077,7 @@ def deploy_status(
 ):
     """Show deployment state for one or all collectors."""
     st = _load_state()
-    profile = _load_profile()
-    deployments = {**st.get("deployments", {}), **profile.get("deployments", {})}
+    deployments = {**st.get("deployments", {}), **_load_gcp_state().get("deployments", {})}
 
     if not deployments:
         typer.echo("No collectors are currently deployed.")
@@ -1066,8 +1125,7 @@ def publish(
     import json
 
     st = _load_state()
-    profile = _load_profile()
-    all_deps = {**st.get("deployments", {}), **profile.get("deployments", {})}
+    all_deps = {**st.get("deployments", {}), **_load_gcp_state().get("deployments", {})}
     state = all_deps.get(collector_name)
     if not state:
         typer.echo(

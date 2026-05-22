@@ -182,6 +182,16 @@ resource "google_cloud_run_v2_service" "airflow" {
         }
       }
 
+      startup_probe {
+        initial_delay_seconds = 30
+        period_seconds        = 10
+        failure_threshold     = 18
+        timeout_seconds       = 5
+        tcp_socket {
+          port = 8080
+        }
+      }
+
       command = ["airflow", "standalone"]
     }
   }

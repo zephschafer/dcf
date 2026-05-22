@@ -35,6 +35,7 @@ def _env_path() -> Path:
 
 def load_state() -> dict:
     _migrate_if_needed()
+    _migrate_gcp_state_from_profile()
     path = _state_path()
     if not path.exists():
         return {}
@@ -172,3 +173,68 @@ def _migrate_if_needed() -> None:
         "[dcf] Migrated project.yml → .dcf/state.yml + profiles.yml + .env\n"
         "      (project.yml renamed to project.yml.bak — safe to delete)"
     )
+
+
+_GCP_STATE_KEYS = frozenset({
+    "project_id", "setup_status", "setup_error",
+    "sa_email", "secret_name", "tf_state_bucket", "warehouse_bucket",
+})
+
+
+def _migrate_gcp_state_from_profile() -> None:
+    """Move GCP runtime state from profiles.yml into state.yml gcp: section."""
+    path = _state_path()
+    state = yaml.safe_load(path.read_text()) if path.exists() else {}
+    state = state or {}
+
+    if "gcp" in state:
+        return  # already migrated
+
+    try:
+        root = _project_root()
+    except RuntimeError:
+        return
+
+    profiles_path = root / "profiles.yml"
+    if not profiles_path.exists():
+        return
+
+    profiles_data = yaml.safe_load(profiles_path.read_text()) or {}
+    active_profile = state.get("active_profile", "default")
+    profile = profiles_data.get(active_profile, {})
+
+    gcp_state_fields = {k: profile[k] for k in _GCP_STATE_KEYS if k in profile}
+    gcp_deps = profile.get("deployments", {})
+    # Only treat deployments as GCP if they look like GCP records
+    gcp_dep_records = {
+        n: d for n, d in gcp_deps.items()
+        if "dag_id" in d or "dataflow_job_name" in d
+    }
+
+    if not gcp_state_fields and not gcp_dep_records:
+        return
+
+    # Build gcp section from profile data + region
+    gcp: dict = {}
+    gcp.update(gcp_state_fields)
+    if "region" in profile:
+        gcp["region"] = profile["region"]
+    if gcp_dep_records:
+        gcp["deployments"] = gcp_dep_records
+
+    state["gcp"] = gcp
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(yaml.dump(state, default_flow_style=False, sort_keys=False))
+
+    # Strip GCP state fields from the profile
+    for k in _GCP_STATE_KEYS:
+        profile.pop(k, None)
+    if gcp_dep_records:
+        # Remove migrated GCP deployments; keep any local-only ones
+        remaining = {n: d for n, d in gcp_deps.items() if n not in gcp_dep_records}
+        if remaining:
+            profile["deployments"] = remaining
+        else:
+            profile.pop("deployments", None)
+    profiles_data[active_profile] = profile
+    profiles_path.write_text(yaml.dump(profiles_data, default_flow_style=False, sort_keys=False))

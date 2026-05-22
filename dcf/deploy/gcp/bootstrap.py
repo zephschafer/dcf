@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import re
+import subprocess
 import time as _time
 
 from google.api_core.exceptions import Conflict, NotFound
@@ -50,25 +51,85 @@ def create_project(project_name: str, credentials: Credentials) -> str:
     return project_id
 
 
+_REQUIRED_APIS = [
+    "storage.googleapis.com",
+    "iam.googleapis.com",
+    "secretmanager.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "run.googleapis.com",
+    "sqladmin.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "cloudbuild.googleapis.com",
+]
+
+
+def enable_required_apis(project_id: str, credentials: Credentials) -> None:
+    """Enable all APIs required for dcf provisioning."""
+    result = subprocess.run(
+        ["gcloud", "services", "enable", "--project", project_id] + _REQUIRED_APIS,
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to enable required GCP APIs: {result.stderr}")
+    logger.info("Enabled required APIs on project %s", project_id)
+
+
+def link_billing_account(project_id: str, credentials: Credentials) -> None:
+    """Link the first active billing account to the project using gcloud CLI."""
+    from .gcloud import get_active_billing_account
+    billing_account = get_active_billing_account()
+    if not billing_account:
+        raise RuntimeError(
+            "No active billing accounts found. Create one at: https://console.cloud.google.com/billing"
+        )
+    result = subprocess.run(
+        ["gcloud", "billing", "projects", "link", project_id,
+         f"--billing-account={billing_account}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to link billing account: {result.stderr}")
+    logger.info("Linked billing account %s to project %s", billing_account, project_id)
+
+
 def create_state_bucket(project_id: str, region: str, credentials: Credentials) -> str:
     """Create the GCS bucket used for Terraform state. Returns bucket name."""
     bucket_name = f"dcf-tf-state-{project_id}"
     client = storage.Client(project=project_id, credentials=credentials)
+    from google.api_core.exceptions import Forbidden
+    last_err = None
+    for attempt in range(10):
+        try:
+            bucket = client.create_bucket(bucket_name, location=region)
+            bucket.versioning_enabled = True
+            bucket.patch()
+            logger.info("Created Terraform state bucket %s", bucket_name)
+            return bucket_name
+        except Conflict:
+            logger.info("Terraform state bucket %s already exists", bucket_name)
+            return bucket_name
+        except Exception as e:
+            if isinstance(e, Forbidden) or "billing" in str(e).lower():
+                last_err = e
+                logger.info("Billing not yet active, retrying in 5s (attempt %d/10)...", attempt + 1)
+                _time.sleep(5)
+                continue
+            raise
+    raise RuntimeError(
+        f"GCP billing did not activate for project '{project_id}' after 50s: {last_err}\n"
+        f"Check billing at: https://console.cloud.google.com/billing/linkedaccount?project={project_id}"
+    ) from last_err
+
+
+def create_warehouse_bucket(project_id: str, region: str, credentials: Credentials) -> str:
+    """Create the GCS bucket used as the data warehouse. Returns bucket name."""
+    bucket_name = f"dcf-warehouse-{project_id}"
+    client = storage.Client(project=project_id, credentials=credentials)
     try:
-        bucket = client.create_bucket(bucket_name, location=region)
-        bucket.versioning_enabled = True
-        bucket.patch()
-        logger.info("Created Terraform state bucket %s", bucket_name)
+        client.create_bucket(bucket_name, location=region)
+        logger.info("Created warehouse bucket %s", bucket_name)
     except Conflict:
-        logger.info("Terraform state bucket %s already exists", bucket_name)
-    except Exception as e:
-        from google.api_core.exceptions import Forbidden
-        if isinstance(e, Forbidden) or "billing" in str(e).lower():
-            raise RuntimeError(
-                f"Billing is not enabled for project '{project_id}'. "
-                f"Enable it at: https://console.cloud.google.com/billing"
-            ) from e
-        raise
+        logger.info("Warehouse bucket %s already exists", bucket_name)
     return bucket_name
 
 

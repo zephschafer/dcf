@@ -94,6 +94,10 @@ def deploy(
     build_context = _sync_build_context(project_root, collector_name, gcp_config)
     content_hash = _content_hash(build_context)
 
+    from .bootstrap import enable_required_apis
+    from .gcloud import get_credentials as _get_credentials
+    enable_required_apis(project_id, _get_credentials())
+
     print(f"  Ensuring Artifact Registry repository exists...", flush=True)
     _ensure_artifact_registry_repo(project_id, region)
 
@@ -348,6 +352,49 @@ def _import_existing_cloud_run_job(
         logger.warning("terraform import returned non-zero: %s", result.stderr[-500:])
 
 
+def _import_existing_airflow_resources(
+    project_id: str, region: str, work_dir: Path, env: dict,
+) -> None:
+    """Import any already-existing Airflow resources to avoid 409 on apply."""
+    _tf_import_if_exists(
+        work_dir, env,
+        "google_sql_database_instance.airflow_db",
+        f"{project_id}/dcf-airflow-db",
+        ["gcloud", "sql", "instances", "describe", "dcf-airflow-db", "--project", project_id],
+    )
+    _tf_import_if_exists(
+        work_dir, env,
+        "google_sql_database.airflow",
+        f"{project_id}/dcf-airflow-db/airflow",
+        ["gcloud", "sql", "databases", "describe", "airflow",
+         "--instance", "dcf-airflow-db", "--project", project_id],
+    )
+    _tf_import_if_exists(
+        work_dir, env,
+        "google_cloud_run_v2_service.airflow",
+        f"projects/{project_id}/locations/{region}/services/dcf-airflow",
+        ["gcloud", "run", "services", "describe", "dcf-airflow",
+         "--region", region, "--project", project_id],
+    )
+
+
+def _tf_import_if_exists(
+    work_dir: Path, env: dict, resource_addr: str, resource_id: str, check_cmd: list,
+) -> None:
+    if subprocess.run(check_cmd, capture_output=True).returncode != 0:
+        return
+    result = subprocess.run(
+        ["terraform", "import", resource_addr, resource_id],
+        cwd=str(work_dir), env=env, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        logger.info("Imported %s into Terraform state", resource_addr)
+    elif "already managed by Terraform" in result.stdout + result.stderr:
+        logger.info("%s already in Terraform state", resource_addr)
+    else:
+        logger.warning("terraform import %s returned non-zero: %s", resource_addr, result.stderr[-300:])
+
+
 # ------------------------------------------------------------------ #
 # GCS DAG management                                                   #
 # ------------------------------------------------------------------ #
@@ -456,7 +503,7 @@ def _airflow_build_context() -> Path:
 
 
 def _airflow_content_hash() -> str:
-    template = _DCF_PKG_DIR / "infra" / "modules" / "templates" / "airflow.Dockerfile.tftpl"
+    template = _DCF_PKG_DIR / "infra" / "templates" / "airflow.Dockerfile.tftpl"
     return hashlib.sha256(template.read_bytes()).hexdigest()
 
 
@@ -521,7 +568,10 @@ def _tf_apply_airflow_gcp(
     (work_dir / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2))
 
     env = _tf_env()
+    project_id = gcp_config["project_id"]
+    region = gcp_config["region"]
     _tf_run(["terraform", "init", "-reconfigure"], work_dir, env)
+    _import_existing_airflow_resources(project_id, region, work_dir, env)
     _tf_run(["terraform", "apply", "-auto-approve"], work_dir, env)
 
     raw = subprocess.run(
