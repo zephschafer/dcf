@@ -1131,6 +1131,39 @@ def deploy_status(
 
 
 @app.command()
+def airflow(
+    port: int = typer.Option(8080, "--port", "-p", help="Local port to proxy on"),
+):
+    """Open a local proxy to the GCP Airflow UI (requires gcloud auth)."""
+    import subprocess
+
+    gcp = _load_gcp_state()
+    if gcp.get("setup_status") != "complete":
+        typer.echo("Error: GCP is not provisioned. Run: dcf deploy", err=True)
+        raise typer.Exit(1)
+
+    airflow_url = gcp.get("airflow_url")
+    if not airflow_url:
+        typer.echo("Error: Airflow has not been deployed yet. Run: dcf deploy <collector>", err=True)
+        raise typer.Exit(1)
+
+    project_id = gcp["project_id"]
+    region = gcp["region"]
+
+    typer.echo(f"Proxying Airflow UI on http://localhost:{port}  (Ctrl+C to stop)")
+    typer.echo(f"Login: admin / <password set during deploy>")
+    subprocess.run(
+        [
+            "gcloud", "run", "services", "proxy", "dcf-airflow",
+            "--project", project_id,
+            "--region", region,
+            "--port", str(port),
+        ],
+        check=False,
+    )
+
+
+@app.command()
 def publish(
     collector_name: str = typer.Argument(..., help="Collector name"),
     message: str = typer.Argument(..., help="JSON message body to publish"),
