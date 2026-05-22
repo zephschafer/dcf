@@ -13,8 +13,15 @@ Returns at most 500 rows per query.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
+
+warnings.filterwarnings(
+    "ignore",
+    message="Your application has authenticated using end user credentials",
+    category=UserWarning,
+)
 
 _MAX_ROWS = 500
 
