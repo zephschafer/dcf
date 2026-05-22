@@ -19,9 +19,10 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-_DCF_PKG_DIR = Path(__file__).parent.parent          # dcf/ package
-_DCF_REPO_ROOT = _DCF_PKG_DIR.parent
-_BATCH_MODULE_DIR = _DCF_PKG_DIR / "infra" / "modules" / "batch_collector"
+_DCF_DEPLOY_DIR   = Path(__file__).parent.parent                            # dcf/deploy/
+_DCF_PKG_DIR      = _DCF_DEPLOY_DIR.parent                                  # dcf/ Python package
+_DCF_REPO_ROOT    = _DCF_PKG_DIR.parent                                     # project root
+_BATCH_MODULE_DIR = _DCF_DEPLOY_DIR / "infra" / "modules" / "batch_collector"
 _BUILD_DIR = Path.home() / ".dcf" / "build"
 _TF_PLUGIN_CACHE = Path.home() / ".dcf" / ".plugin-cache"
 
@@ -238,7 +239,7 @@ def _copy_module_to_work_dir(module_dir: Path, work_dir: Path) -> None:
             continue
         if item.is_file() and item.suffix == ".tf":
             shutil.copy2(item, work_dir / item.name)
-    templates_src = _DCF_PKG_DIR / "infra" / "templates"
+    templates_src = _DCF_DEPLOY_DIR / "infra" / "templates"
     templates_dst = work_dir / "templates"
     if templates_dst.exists():
         shutil.rmtree(templates_dst)
@@ -516,7 +517,7 @@ def _airflow_build_context() -> Path:
 
 
 def _airflow_content_hash() -> str:
-    template = _DCF_PKG_DIR / "infra" / "templates" / "airflow.Dockerfile.tftpl"
+    template = _DCF_DEPLOY_DIR / "infra" / "templates" / "airflow.Dockerfile.tftpl"
     return hashlib.sha256(template.read_bytes()).hexdigest()
 
 
