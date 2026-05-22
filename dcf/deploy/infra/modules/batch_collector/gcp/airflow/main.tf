@@ -183,16 +183,19 @@ resource "google_cloud_run_v2_service" "airflow" {
       }
 
       startup_probe {
-        initial_delay_seconds = 30
+        initial_delay_seconds = 10
         period_seconds        = 10
-        failure_threshold     = 18
+        failure_threshold     = 54
         timeout_seconds       = 5
         tcp_socket {
           port = 8080
         }
       }
 
-      command = ["airflow", "standalone"]
+      # Retry DB check before starting so the container doesn't crash if the
+      # Cloud SQL socket isn't ready yet (IAM propagation can lag).
+      command = ["/bin/bash", "-c"]
+      args    = ["for i in $(seq 1 60); do airflow db check 2>&1 && break; echo \"Waiting for DB (attempt $i)...\"; sleep 5; done; exec airflow standalone"]
     }
   }
 
