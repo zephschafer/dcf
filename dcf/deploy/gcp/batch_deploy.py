@@ -128,26 +128,31 @@ def deploy(
     )
     _write_dag_gcs(dag_content, collector_name, dags_bucket)
 
-    print(f"  Provisioning GCP Airflow stack...", flush=True)
-    credentials = _generate_airflow_credentials(project_root)
-    airflow_outputs = _tf_apply_airflow_gcp(
-        build_context=_airflow_build_context(),
-        image_uri=_airflow_image_uri(project_id, region),
-        content_hash=_airflow_content_hash(),
-        gcp_config=gcp_config,
-        credentials=credentials,
-        project_root=project_root,
-    )
-
-    airflow_url = airflow_outputs.get("webserver_url", {}).get("value", "")
-    if airflow_url:
-        print(f"  Airflow UI: {airflow_url}", flush=True)
+    existing_airflow_url = gcp_config.get("airflow_url", "")
+    existing_dags_bucket = gcp_config.get("airflow_dags_bucket", "")
+    if existing_airflow_url and existing_dags_bucket == dags_bucket:
+        airflow_url = existing_airflow_url
+    else:
+        print(f"  Provisioning GCP Airflow stack...", flush=True)
+        credentials = _generate_airflow_credentials(project_root)
+        airflow_outputs = _tf_apply_airflow_gcp(
+            build_context=_airflow_build_context(),
+            image_uri=_airflow_image_uri(project_id, region),
+            content_hash=_airflow_content_hash(),
+            gcp_config=gcp_config,
+            credentials=credentials,
+            project_root=project_root,
+        )
+        airflow_url = airflow_outputs.get("webserver_url", {}).get("value", "")
+        if airflow_url:
+            print(f"  Airflow UI: {airflow_url}", flush=True)
 
     return {
         "schedule": schedule,
         "dag_id": collector_name,
         "cloud_run_job": job_name,
         "airflow_url": airflow_url,
+        "airflow_dags_bucket": dags_bucket,
         "image_uri": image_uri,
         "deployed_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
     }

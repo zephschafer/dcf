@@ -893,6 +893,10 @@ def _deploy_one(collector_name: str, profile_name: str = "default") -> None:
 
     gcp = _load_gcp_state()
     gcp.setdefault("deployments", {})[collector_name] = state
+    if state.get("airflow_url"):
+        gcp["airflow_url"] = state["airflow_url"]
+    if state.get("airflow_dags_bucket"):
+        gcp["airflow_dags_bucket"] = state["airflow_dags_bucket"]
     _save_gcp_state(gcp)
 
     typer.echo(f"\nDeployed '{collector_name}' successfully.")
