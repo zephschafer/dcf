@@ -79,6 +79,12 @@ resource "google_project_iam_member" "storage_viewer" {
   member  = "serviceAccount:${var.sa_email}"
 }
 
+resource "google_storage_bucket_iam_member" "warehouse_writer" {
+  bucket = var.warehouse_bucket
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${var.sa_email}"
+}
+
 locals {
   db_conn_name = google_sql_database_instance.airflow_db.connection_name
   db_url       = "postgresql+psycopg2://airflow:${var.db_password}@/airflow?host=/cloudsql/${local.db_conn_name}"
