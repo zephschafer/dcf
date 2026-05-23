@@ -106,8 +106,6 @@ __pycache__/
 """
 
 _PROFILES_YML_TEMPLATE = """\
-# Cloud deployment target. Commit this file — it contains no secrets.
-# Credentials come from: gcloud auth application-default login
 default:
   type: gcp
   project_name: my-dcf-project
@@ -625,10 +623,9 @@ def _preflight_gcp(project_name: str) -> None:
         raise typer.Exit(1)
 
     # 5. project_name configured
-    if not project_name or project_name == "my-dcf-project":
+    if not project_name:
         typer.echo(
-            "Error: set project_name in profiles.yml before deploying to GCP.\n"
-            "  Edit profiles.yml and change project_name from 'my-dcf-project' to your desired name.",
+            "Error: set project_name in profiles.yml before deploying to GCP.",
             err=True,
         )
         raise typer.Exit(1)
