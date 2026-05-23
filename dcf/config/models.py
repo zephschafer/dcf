@@ -40,6 +40,46 @@ class Response(BaseModel):
 
 
 # ------------------------------------------------------------------ #
+# Source — SQL connection & tables                                     #
+# ------------------------------------------------------------------ #
+
+class LocalPostgresConnection(BaseModel):
+    type: Literal["postgres"]
+    host: str
+    port: int = 5432
+    database: str
+    user: str
+    password: str  # supports {{ env.VAR }}
+
+
+class CloudSqlConnection(BaseModel):
+    type: Literal["cloud_sql"]
+    instance: str  # "project:region:instance-name"
+    database: str
+    user: str
+    password: str  # supports {{ env.VAR }}
+
+
+SqlConnection = Annotated[
+    Union[LocalPostgresConnection, CloudSqlConnection],
+    Field(discriminator="type"),
+]
+
+
+class SqlTable(BaseModel):
+    table: str
+    primary_key: str
+    columns: list[str] | None = None  # None → SELECT *
+
+
+class SqlSource(BaseModel):
+    model_config = {"populate_by_name": True}
+    type: Literal["sql"]
+    connection: SqlConnection
+    tables: list[SqlTable]
+
+
+# ------------------------------------------------------------------ #
 # Source — iteration                                                   #
 # ------------------------------------------------------------------ #
 
@@ -150,7 +190,7 @@ class PubSubSource(BaseModel):
     schema_: Schema | None = Field(default=None, alias="schema")
 
 
-Source = Annotated[Union[HttpSource, PythonSource, PubSubSource], Field(discriminator="type")]
+Source = Annotated[Union[HttpSource, PythonSource, PubSubSource, SqlSource], Field(discriminator="type")]
 
 
 # ------------------------------------------------------------------ #
@@ -233,6 +273,15 @@ class Collector(BaseModel):
     def all_dynamic_params_have_iterators(self) -> "Collector":
         if isinstance(self.source, (HttpSource, PythonSource)):
             _validate_dynamic_params(self.source.params, self.cadence.iterate)
+        return self
+
+    @model_validator(mode="after")
+    def sql_source_no_iterate(self) -> "Collector":
+        if isinstance(self.source, SqlSource) and self.cadence.iterate:
+            raise ValueError(
+                "SQL collectors do not support cadence.iterate — "
+                "tables are fetched in full. Remove the iterate block."
+            )
         return self
 
     @classmethod

@@ -4,7 +4,7 @@ import textwrap
 import traceback
 
 from ..config.models import (
-    Collector, HttpSource, PythonSource, PubSubSource,
+    Collector, HttpSource, PythonSource, PubSubSource, SqlSource,
     DateRangeIterate, CategoricalIterate,
 )
 from .iterator import build_request_sequence
@@ -36,18 +36,65 @@ def _log_preamble(collector: Collector, n_requests: int) -> None:
         print(f"  source:  {src.module}.{src.function}()")
     elif isinstance(src, PubSubSource):
         print(f"  source:  {src.subscription}")
+    elif isinstance(src, SqlSource):
+        conn = src.connection
+        loc = (f"{conn.instance}/{conn.database}" if conn.type == "cloud_sql"
+               else f"{conn.host}:{conn.port}/{conn.database}")
+        print(f"  source:  {conn.type} {loc}")
+        print(f"  tables:  {', '.join(t.table for t in src.tables)}")
 
-    if not iterate:
-        print(f"  {n_requests} request, no iteration")
-    else:
-        parts = []
-        for spec in iterate:
-            if isinstance(spec, DateRangeIterate):
-                parts.append(f"date_range {spec.start} → {spec.end} in {spec.step} steps")
-            elif isinstance(spec, CategoricalIterate):
-                parts.append(f"categorical {spec.param} ({len(spec.values)} values)")
-        print(f"  iterate: {' × '.join(parts)} · {n_requests} requests")
+    if not isinstance(src, SqlSource):
+        if not iterate:
+            print(f"  {n_requests} request, no iteration")
+        else:
+            parts = []
+            for spec in iterate:
+                if isinstance(spec, DateRangeIterate):
+                    parts.append(f"date_range {spec.start} → {spec.end} in {spec.step} steps")
+                elif isinstance(spec, CategoricalIterate):
+                    parts.append(f"categorical {spec.param} ({len(spec.values)} values)")
+            print(f"  iterate: {' × '.join(parts)} · {n_requests} requests")
     print()
+
+
+def _run_sql_collector(spark, collector: Collector, catalog: str) -> None:
+    from .fetcher import fetch_sql_table
+    src = collector.source
+    failed = 0
+
+    for sql_table in src.tables:
+        print(f"  [{sql_table.table}] fetching...", flush=True)
+        try:
+            records = fetch_sql_table(src, sql_table)
+        except Exception as e:
+            failed += 1
+            print(f"    fetch error ({type(e).__name__}): {e}")
+            print(textwrap.indent(traceback.format_exc(), "      "))
+            continue
+
+        if not records:
+            print(f"    0 rows — skipping")
+            continue
+
+        df = project(records, None)
+        print(f"    {len(df)} rows → writing")
+        iceberg_writer.write(
+            spark,
+            collector,
+            df,
+            catalog=catalog,
+            table_name_override=sql_table.table,
+            primary_key_override=sql_table.primary_key,
+        )
+
+    total = len(src.tables)
+    label = f"'{collector.name}'"
+    if failed == total:
+        print(f"\n[dcf] {label} FAILED — all {total} table(s) errored\n")
+    elif failed:
+        print(f"\n[dcf] {label} complete with errors — {failed}/{total} tables failed\n")
+    else:
+        print(f"\n[dcf] {label} complete\n")
 
 
 def run_collector(
@@ -69,6 +116,12 @@ def run_collector(
     else:
         from dcf.spark_session import get_spark
         spark = get_spark("dcf")
+
+    if isinstance(collector.source, SqlSource):
+        _run_sql_collector(spark, collector, catalog)
+        if spark is not None:
+            spark.stop()
+        return
 
     # Static params declared in the YAML (value is set) flow through to Python sources
     static_params = {p.name: p.value for p in collector.source.params if p.value is not None}

@@ -75,6 +75,50 @@ Pick the source type **before** writing any YAML. The wrong choice requires a fu
 
 **Examples:** GitHub REST API, Portland Maps API, OpenWeatherMap, any REST endpoint that returns `{"data": [...]}`.
 
+### Use `type: sql` when the source is a relational database:
+- Supports **PostgreSQL** (direct TCP connection) and **GCP Cloud SQL** (socket via Cloud Run or `cloud-sql-proxy`)
+- Declare each table you want with its `primary_key`; `columns` is optional (omit to fetch all)
+- Each table writes to its own warehouse path under the collector's `namespace`
+- No iteration axes — tables are always fetched in full
+
+**Local postgres YAML:**
+```yaml
+source:
+  type: sql
+  connection:
+    type: postgres
+    host: localhost
+    port: 5432
+    database: my_db
+    user: my_user
+    password: "{{ env.DB_PASSWORD }}"
+  tables:
+    - table: orders
+      primary_key: order_id
+    - table: customers
+      primary_key: id
+      columns: [id, email, created_at]
+```
+
+**Cloud SQL YAML:**
+```yaml
+source:
+  type: sql
+  connection:
+    type: cloud_sql
+    instance: "my-project:us-central1:my-instance"
+    database: my_db
+    user: my_user
+    password: "{{ env.DB_PASSWORD }}"
+  tables:
+    - table: orders
+      primary_key: order_id
+```
+
+For `cloud_sql` locally: run `cloud-sql-proxy my-project:us-central1:my-instance` first so the socket is available at `/cloudsql/...`. On Cloud Run, the socket is mounted automatically.
+
+---
+
 ### Use `type: python` when any of these is true:
 - The API is **GraphQL** — requires a POST body with a dynamic query string; `type: http` cannot express this
 - **Cursor pagination** — the next-page token comes from the response (e.g. `pageInfo.endCursor`); you must read the response to know what to request next

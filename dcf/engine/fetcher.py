@@ -116,3 +116,54 @@ def fetch_records(source, dynamic_params: dict[str, Any]) -> list[dict]:
     if isinstance(source, PythonSource):
         return _fetch_python(source, dynamic_params)
     return _fetch_http(source, dynamic_params)
+
+
+# ------------------------------------------------------------------ #
+# SQL source                                                           #
+# ------------------------------------------------------------------ #
+
+def _normalize_sql_value(v: Any) -> Any:
+    from decimal import Decimal
+    import uuid as _uuid
+    if isinstance(v, Decimal):
+        return float(v)
+    if isinstance(v, _uuid.UUID):
+        return str(v)
+    if isinstance(v, (bytes, memoryview)):
+        return None
+    return v
+
+
+def _get_sql_connection(connection):
+    import psycopg2
+    if connection.type == "postgres":
+        return psycopg2.connect(
+            host=connection.host,
+            port=connection.port,
+            database=connection.database,
+            user=connection.user,
+            password=connection.password,
+        )
+    # cloud_sql: Cloud Run mounts the socket at /cloudsql/{connection_name}
+    # For local dev, run cloud-sql-proxy to expose the same socket path
+    return psycopg2.connect(
+        host=f"/cloudsql/{connection.instance}",
+        database=connection.database,
+        user=connection.user,
+        password=connection.password,
+    )
+
+
+def fetch_sql_table(source, table) -> list[dict]:
+    conn = _get_sql_connection(source.connection)
+    try:
+        with conn.cursor() as cur:
+            cols = ", ".join(table.columns) if table.columns else "*"
+            cur.execute(f"SELECT {cols} FROM {table.table}")
+            names = [d[0] for d in cur.description]
+            return [
+                {k: _normalize_sql_value(v) for k, v in zip(names, row)}
+                for row in cur.fetchall()
+            ]
+    finally:
+        conn.close()

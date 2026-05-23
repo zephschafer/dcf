@@ -1,0 +1,27 @@
+name: airflow_db
+namespace: airflow
+description: "Airflow metadata: dag definitions, run history, and task execution records"
+
+source:
+  type: sql
+  connection:
+    type: cloud_sql
+    instance: "{{ env.GCP_PROJECT }}:us-central1:dcf-airflow-db"
+    database: airflow
+    user: airflow
+    password: "{{ env.AIRFLOW_DB_PASSWORD }}"
+  tables:
+    - table: dag
+      primary_key: dag_id
+    - table: dag_run
+      primary_key: run_id
+    - table: task_instance
+      primary_key: id
+      columns: [id, dag_id, run_id, task_id, state, start_date, end_date, duration, try_number]
+
+cadence:
+  strategy: incremental
+
+deployment:
+  schedule: "0 8 * * *"
+  paused: false

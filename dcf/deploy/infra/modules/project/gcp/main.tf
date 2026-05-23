@@ -213,6 +213,16 @@ resource "google_cloud_run_v2_job" "collector" {
       service_account = local.sa_email
       max_retries     = 0
 
+      dynamic "volumes" {
+        for_each = length(each.value.cloud_sql_instances) > 0 ? [1] : []
+        content {
+          name = "cloudsql"
+          cloud_sql_instance {
+            instances = each.value.cloud_sql_instances
+          }
+        }
+      }
+
       containers {
         image = each.value.image_uri
 
@@ -229,6 +239,14 @@ resource "google_cloud_run_v2_job" "collector" {
         resources {
           limits = {
             memory = "512Mi"
+          }
+        }
+
+        dynamic "volume_mounts" {
+          for_each = length(each.value.cloud_sql_instances) > 0 ? [1] : []
+          content {
+            name       = "cloudsql"
+            mount_path = "/cloudsql"
           }
         }
       }

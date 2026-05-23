@@ -12,10 +12,11 @@ variable "region" {
 
 variable "collectors" {
   type = map(object({
-    image_uri     = string
-    build_context = string
-    content_hash  = string
-    java_enabled  = bool
+    image_uri           = string
+    build_context       = string
+    content_hash        = string
+    java_enabled        = bool
+    cloud_sql_instances = list(string)
   }))
   default     = {}
   description = "Map of collector name to build configuration. Empty = no Airflow deployed."

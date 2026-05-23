@@ -43,6 +43,8 @@ def write(
     df: pd.DataFrame,
     catalog: str = "local",
     dynamic_params: dict | None = None,
+    table_name_override: str | None = None,
+    primary_key_override: str | None = None,
 ) -> None:
     """
     Write a projected DataFrame to the Iceberg warehouse according to
@@ -54,18 +56,20 @@ def write(
     df = df.copy()
     df["dcf_updated_at"] = _pst_now()
 
-    catalog_namespace = collector.namespace or collector.name  # Spark catalog always needs a namespace
+    table_name = table_name_override or collector.name
+    pk = primary_key_override if primary_key_override is not None else collector.cadence.primary_key
+    catalog_namespace = collector.namespace or table_name  # Spark catalog always needs a namespace
     build = collector.cadence
 
     # GCS: use google-cloud-storage + PyArrow directly for all strategies — no Spark catalog needed
     if catalog == "gcp":
         warehouse_bucket = _gcs_warehouse_bucket()
         if build.strategy == "incremental":
-            _upsert_gcs(df, warehouse_bucket, collector.namespace, collector.name, build.primary_key)
+            _upsert_gcs(df, warehouse_bucket, collector.namespace, table_name, pk)
         elif build.strategy == "append":
-            _append_gcs(df, warehouse_bucket, collector.namespace, collector.name)
+            _append_gcs(df, warehouse_bucket, collector.namespace, table_name)
         elif build.strategy == "full_refresh":
-            _overwrite_gcs(df, warehouse_bucket, collector.namespace, collector.name)
+            _overwrite_gcs(df, warehouse_bucket, collector.namespace, table_name)
         return
 
     _ensure_namespace(spark, catalog, catalog_namespace)
@@ -74,11 +78,11 @@ def write(
         _write_staged(spark, collector, df, catalog, catalog_namespace, build.staging, build.merge, dynamic_params or {})
     elif build.strategy == "incremental":
         warehouse_root = Path(spark.conf.get(f"spark.sql.catalog.{catalog}.warehouse"))
-        _upsert(df, warehouse_root, collector.namespace, collector.name, build.primary_key)
+        _upsert(df, warehouse_root, collector.namespace, table_name, pk)
     elif build.strategy == "append":
-        _append(spark, df, f"{catalog}.{catalog_namespace}.{collector.name}")
+        _append(spark, df, f"{catalog}.{catalog_namespace}.{table_name}")
     elif build.strategy == "full_refresh":
-        _overwrite(spark, df, f"{catalog}.{catalog_namespace}.{collector.name}")
+        _overwrite(spark, df, f"{catalog}.{catalog_namespace}.{table_name}")
 
 
 def _write_staged(

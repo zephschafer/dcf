@@ -88,12 +88,21 @@ def deploy(
     build_context = _sync_build_context(project_root, collector_name, gcp_config)
     content_hash = _content_hash(build_context)
 
+    from ...config.models import SqlSource, CloudSqlConnection
+    from ...config.loader import load_collector
+    _collector = load_collector(project_root / "collectors" / f"{collector_name}.yml")
+    cloud_sql_instances = []
+    if (isinstance(_collector.source, SqlSource) and
+            isinstance(_collector.source.connection, CloudSqlConnection)):
+        cloud_sql_instances = [_collector.source.connection.instance]
+
     collectors = _collectors_map(gcp_config, project_root, override={
         collector_name: {
             "image_uri": image_uri,
             "build_context": str(build_context),
             "content_hash": content_hash,
             "java_enabled": False,
+            "cloud_sql_instances": cloud_sql_instances,
         }
     })
 
@@ -129,6 +138,7 @@ def deploy(
         "content_hash": content_hash,
         "java_enabled": False,
         "build_context": str(build_context),
+        "cloud_sql_instances": cloud_sql_instances,
         "deployed_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
     }
 
@@ -226,6 +236,7 @@ def _collectors_map(
             "build_context": build_ctx,
             "content_hash": dep.get("content_hash", ""),
             "java_enabled": dep.get("java_enabled", False),
+            "cloud_sql_instances": dep.get("cloud_sql_instances", []),
         }
 
     if override:
