@@ -149,9 +149,13 @@ cadence:
     - type: date_range
       params: [fromdate, todate]
       format: "%s"
-      start: "2025-01-01"
+      start: "2026-01-01"
       end: today
       step: 30 days
+
+# deployment:
+#   schedule: "0 8 * * *"   # cron expression — required
+#   paused: false             # optional, default false
 """
 
 
@@ -393,7 +397,7 @@ def gcp_setup(
     region: str = typer.Option(..., "--region", "-r", help="GCP region (e.g. us-central1)"),
 ):
     """Provision a GCP data lake. Tip: dcf deploy handles this automatically when profiles.yml is configured."""
-    from .deploy.gcp import bootstrap, terraform
+    from .deploy.gcp import bootstrap
     from .deploy.gcp.gcloud import get_credentials
 
     gcp = _load_gcp_state()
@@ -455,43 +459,35 @@ def gcp_setup(
 
 
 def _gcp_teardown_lake(gcp: dict, credentials) -> list[str]:
-    """Destroy GCP lake resources. Returns list of destroyed resource names."""
-    from .deploy.gcp import bootstrap, terraform
+    """Destroy GCP lake resources via Terraform, then delete the Terraform state bucket.
+
+    Returns list of destroyed resource names.
+    """
+    from .deploy.gcp.batch_deploy import _tf_env, _tf_run, _tf_state_dir
+    from .deploy.gcp import bootstrap
 
     destroyed: list[str] = []
-    project_id = gcp.get("project_id", "")
+    project_root = _project_root()
+    work_dir = _tf_state_dir(project_root) / "gcp"
+
+    if work_dir.exists():
+        typer.echo("Destroying all GCP resources via Terraform...")
+        try:
+            env = _tf_env()
+            _tf_run(["terraform", "destroy", "-auto-approve"], work_dir, env)
+            shutil.rmtree(work_dir)
+            destroyed.append("all Terraform-managed resources")
+        except Exception as e:
+            typer.echo(f"  Terraform destroy failed (continuing): {e}", err=True)
 
     tf_state_bucket = gcp.get("tf_state_bucket", "")
     if tf_state_bucket:
-        typer.echo("Running terraform destroy (warehouse bucket)...")
+        typer.echo(f"Deleting Terraform state bucket ({tf_state_bucket})...")
         try:
-            terraform.destroy(
-                project_id=project_id,
-                region=gcp.get("region", ""),
-                sa_email=gcp.get("sa_email", ""),
-                tf_state_bucket=tf_state_bucket,
-            )
-            destroyed.append("warehouse bucket")
+            bootstrap.delete_gcs_bucket(tf_state_bucket, credentials)
+            destroyed.append("Terraform state bucket")
         except Exception as e:
-            typer.echo(f"  terraform destroy failed (continuing): {e}", err=True)
-
-    secret_name = gcp.get("secret_name", "")
-    if secret_name:
-        typer.echo("Deleting Secret Manager secret...")
-        try:
-            bootstrap.delete_secret(secret_name, credentials)
-            destroyed.append("SA key secret")
-        except Exception as e:
-            typer.echo(f"  secret delete failed (continuing): {e}", err=True)
-
-    sa_email = gcp.get("sa_email", "")
-    if sa_email:
-        typer.echo("Deleting service account...")
-        try:
-            bootstrap.delete_service_account(project_id, sa_email, credentials)
-            destroyed.append("service account")
-        except Exception as e:
-            typer.echo(f"  service account delete failed (continuing): {e}", err=True)
+            typer.echo(f"  bucket delete failed (continuing): {e}", err=True)
 
     return destroyed
 
@@ -652,13 +648,18 @@ def _ensure_gcp_provisioned(profile: dict) -> None:
                 raise typer.Exit(1)
         if not gcp.get("dags_bucket"):
             try:
-                from .deploy.gcp.gcloud import get_credentials as _gc
-                from .deploy.gcp import bootstrap as _bs
-                creds = _gc()
-                gcp["dags_bucket"] = _bs.create_dags_bucket(gcp["project_id"], gcp["region"], creds)
+                typer.echo("[dcf] Provisioning missing lake resources via Terraform...")
+                from .deploy.gcp.batch_deploy import _tf_apply_project
+                outputs = _tf_apply_project(gcp["project_id"], gcp["region"], {}, {}, _project_root())
+                gcp.update({
+                    "sa_email": outputs.get("sa_email") or gcp.get("sa_email"),
+                    "secret_name": outputs.get("secret_name") or gcp.get("secret_name"),
+                    "warehouse_bucket": outputs.get("warehouse_bucket") or gcp.get("warehouse_bucket"),
+                    "dags_bucket": outputs["dags_bucket"],
+                })
                 _save_gcp_state(gcp)
             except Exception as e:
-                typer.echo(f"[dcf] Warning: could not create DAGs bucket: {e}", err=True)
+                typer.echo(f"[dcf] Warning: could not provision DAGs bucket: {e}", err=True)
         return
 
     project_name = profile.get("project_name", "")
@@ -699,24 +700,28 @@ def _ensure_gcp_provisioned(profile: dict) -> None:
         _save_state(st)
 
     try:
-        typer.echo("[dcf] Enabling required GCP APIs...")
+        typer.echo("[dcf] Enabling GCP APIs (may take ~60s on first run)...")
         bootstrap.enable_required_apis(project_id, credentials)
     except Exception as e:
         typer.echo(f"\n[dcf] Failed to enable APIs: {e}", err=True)
         raise typer.Exit(1)
 
     try:
-        tf_state_bucket  = bootstrap.create_state_bucket(project_id, region, credentials)
-        sa_email         = bootstrap.create_service_account(project_id, credentials)
-        key_data         = bootstrap.create_service_account_key(project_id, sa_email, credentials)
-        secret_name      = bootstrap.store_key_in_secret_manager(project_id, key_data, credentials)
-        warehouse_bucket = bootstrap.create_warehouse_bucket(project_id, region, credentials)
-        dags_bucket      = bootstrap.create_dags_bucket(project_id, region, credentials)
+        typer.echo("[dcf] Creating Terraform state bucket...")
+        tf_state_bucket = bootstrap.create_state_bucket(project_id, region, credentials)
+
+        typer.echo("[dcf] Provisioning lake infrastructure via Terraform...")
+        from .deploy.gcp.batch_deploy import _tf_apply_project
+        project_root = _project_root()
+        outputs = _tf_apply_project(project_id, region, {}, {}, project_root)
+
         gcp.update({
             "region": region,
-            "sa_email": sa_email, "secret_name": secret_name,
-            "tf_state_bucket": tf_state_bucket, "warehouse_bucket": warehouse_bucket,
-            "dags_bucket": dags_bucket,
+            "sa_email": outputs["sa_email"],
+            "secret_name": outputs["secret_name"],
+            "tf_state_bucket": tf_state_bucket,
+            "warehouse_bucket": outputs["warehouse_bucket"],
+            "dags_bucket": outputs["dags_bucket"],
             "setup_status": "complete", "setup_error": None,
         })
         _save_gcp_state(gcp)
@@ -857,7 +862,7 @@ def _deploy_one(collector_name: str, profile_name: str = "default") -> None:
                 typer.echo(f"  Type:         batch (local Terraform)")
                 typer.echo(f"  Image:        {state['image_tag']}")
                 typer.echo(f"  Warehouse:    {state['warehouse_path']}")
-                typer.echo(f"  Airflow UI:   {state.get('airflow_url', 'http://localhost:8080')}")
+                typer.echo(f"  Airflow UI:   http://localhost:8080  (run: dcf airflow)")
             return
 
         gcp = _require_gcp_config()
@@ -892,11 +897,13 @@ def _deploy_one(collector_name: str, profile_name: str = "default") -> None:
         raise typer.Exit(1)
 
     gcp = _load_gcp_state()
+    airflow_url = state.pop("airflow_url", "")
+    airflow_dags_bucket = state.pop("airflow_dags_bucket", "")
     gcp.setdefault("deployments", {})[collector_name] = state
-    if state.get("airflow_url"):
-        gcp["airflow_url"] = state["airflow_url"]
-    if state.get("airflow_dags_bucket"):
-        gcp["airflow_dags_bucket"] = state["airflow_dags_bucket"]
+    if airflow_url:
+        gcp["airflow_url"] = airflow_url
+    if airflow_dags_bucket:
+        gcp["airflow_dags_bucket"] = airflow_dags_bucket
     _save_gcp_state(gcp)
 
     typer.echo(f"\nDeployed '{collector_name}' successfully.")
@@ -909,8 +916,8 @@ def _deploy_one(collector_name: str, profile_name: str = "default") -> None:
         typer.echo(f"  DAG:          {state['dag_id']}")
         typer.echo(f"  Cloud Run:    {state['cloud_run_job']}")
         typer.echo(f"  Schedule:     {state['schedule']}")
-        if state.get("airflow_url"):
-            typer.echo(f"  Airflow UI:   {state['airflow_url']}")
+        if airflow_url:
+            typer.echo(f"  Airflow UI:   http://localhost:8080  (run: dcf airflow)")
 
 
 @app.command()
@@ -1092,7 +1099,9 @@ def deploy_status(
 ):
     """Show deployment state for one or all collectors."""
     st = _load_state()
-    deployments = {**st.get("deployments", {}), **_load_gcp_state().get("deployments", {})}
+    gcp = _load_gcp_state()
+    deployments = {**st.get("deployments", {}), **gcp.get("deployments", {})}
+    gcp_airflow_url = gcp.get("airflow_url", "")
 
     if not deployments:
         typer.echo("No collectors are currently deployed.")
@@ -1125,8 +1134,8 @@ def deploy_status(
             typer.echo(f"  Schedule:     {state.get('schedule', '-')}")
             typer.echo(f"  DAG:          {state.get('dag_id', '-')}")
             typer.echo(f"  Cloud Run:    {state.get('cloud_run_job', '-')}")
-            if state.get("airflow_url"):
-                typer.echo(f"  Airflow UI:   {state.get('airflow_url', '-')}")
+            if gcp_airflow_url:
+                typer.echo(f"  Airflow UI:   http://localhost:8080  (run: dcf airflow)")
         typer.echo(f"  Deployed at:  {state.get('deployed_at', '-')}")
 
 
@@ -1135,7 +1144,12 @@ def airflow(
     port: int = typer.Option(8080, "--port", "-p", help="Local port to proxy on"),
 ):
     """Open a local proxy to the GCP Airflow UI (requires gcloud auth)."""
+    import http.client
     import subprocess
+    import threading
+    import time
+    import urllib.parse
+    from http.server import BaseHTTPRequestHandler, HTTPServer
 
     gcp = _load_gcp_state()
     if gcp.get("setup_status") != "complete":
@@ -1147,20 +1161,124 @@ def airflow(
         typer.echo("Error: Airflow has not been deployed yet. Run: dcf deploy <collector>", err=True)
         raise typer.Exit(1)
 
-    project_id = gcp["project_id"]
-    region = gcp["region"]
+    target_url = airflow_url.rstrip("/")
+    target_host = urllib.parse.urlparse(target_url).netloc
+
+    # Cache the identity token and refresh it before it expires (tokens last 1 hour).
+    # Using a direct token+proxy avoids gcloud run services proxy, which routes each
+    # request through the Cloud Run Admin API endpoint and can trigger rate limiting
+    # when Airflow's UI makes bursts of calls (status polling, log fetching, etc.).
+    class _TokenCache:
+        def __init__(self):
+            self._token = None
+            self._expires_at = 0.0
+            self._lock = threading.Lock()
+
+        def get(self) -> str:
+            with self._lock:
+                if time.monotonic() < self._expires_at:
+                    return self._token
+                result = subprocess.run(
+                    ["gcloud", "auth", "print-identity-token"],
+                    capture_output=True, text=True, check=True,
+                )
+                self._token = result.stdout.strip()
+                self._expires_at = time.monotonic() + 3300  # refresh 5 min before expiry
+                return self._token
+
+    _HOP_BY_HOP = frozenset([
+        "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+        "te", "trailers", "transfer-encoding", "upgrade",
+    ])
+    token_cache = _TokenCache()
+
+    local_origin = f"http://localhost:{port}"
+    target_scheme = urllib.parse.urlparse(target_url).scheme
+
+    class _ProxyHandler(BaseHTTPRequestHandler):
+        def _proxy(self):
+            token = token_cache.get()
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length) if content_length else None
+            fwd_headers = {
+                k: v for k, v in self.headers.items()
+                if k.lower() not in _HOP_BY_HOP and k.lower() != "host"
+            }
+            # Rewrite Referer/Origin so Airflow's CSRF check sees its own host.
+            for h in list(fwd_headers.keys()):
+                if h.lower() in ("referer", "origin"):
+                    fwd_headers[h] = fwd_headers[h].replace(local_origin, target_url, 1)
+            fwd_headers["Host"] = target_host
+            fwd_headers["Authorization"] = f"Bearer {token}"
+            fwd_headers["X-Forwarded-Proto"] = target_scheme
+
+            conn = (http.client.HTTPSConnection(target_host, timeout=30)
+                    if target_scheme == "https"
+                    else http.client.HTTPConnection(target_host, timeout=30))
+            try:
+                conn.request(self.command, self.path, body=body, headers=fwd_headers)
+                resp = conn.getresponse()
+                resp_body = resp.read()
+                # Rewrite Location so the browser follows redirects through the proxy
+                # rather than navigating directly to the Cloud Run URL (which needs auth).
+                # Match by host regardless of scheme in case Airflow downgrades to http.
+                def _rewrite_location(v):
+                    for scheme in ("https://", "http://"):
+                        prefix = scheme + target_host
+                        if v.startswith(prefix):
+                            return local_origin + v[len(prefix):]
+                    return v
+                resp_headers = [
+                    (k, _rewrite_location(v) if k.lower() == "location" else v)
+                    for k, v in resp.getheaders()
+                ]
+                self._relay(resp.status, resp_headers, resp_body)
+            finally:
+                conn.close()
+
+        def _relay(self, status, headers, body):
+            self.send_response(status)
+            for k, v in headers:
+                if k.lower() not in _HOP_BY_HOP and k.lower() != "content-length":
+                    self.send_header(k, v)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = _proxy
+
+        def log_message(self, *_):
+            pass
 
     typer.echo(f"Proxying Airflow UI on http://localhost:{port}  (Ctrl+C to stop)")
-    typer.echo(f"Login: admin / <password set during deploy>")
-    subprocess.run(
-        [
-            "gcloud", "run", "services", "proxy", "dcf-airflow",
-            "--project", project_id,
-            "--region", region,
-            "--port", str(port),
-        ],
-        check=False,
-    )
+    typer.echo("Login: admin / <password set during deploy>")
+    try:
+        server = HTTPServer(("127.0.0.1", port), _ProxyHandler)
+    except OSError as e:
+        if e.errno == 48:  # Address already in use — kill the stale proxy and retry
+            import os
+            import signal
+            import subprocess
+            import time
+
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
+            )
+            pids = result.stdout.strip().split()
+            if pids:
+                for pid in pids:
+                    try:
+                        os.kill(int(pid), signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                time.sleep(0.5)
+            server = HTTPServer(("127.0.0.1", port), _ProxyHandler)
+        else:
+            raise
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        typer.echo("\nProxy stopped.")
 
 
 @app.command()
