@@ -36,7 +36,7 @@ resource "null_resource" "build" {
   }
 
   provisioner "local-exec" {
-    command = "gcloud builds submit --project ${var.project_id} --region ${var.region} --tag ${var.image_uri} --timeout 600s ${var.build_context}"
+    command = "n=0; until gcloud builds submit --project ${var.project_id} --region ${var.region} --tag ${var.image_uri} --timeout 600s ${var.build_context}; do n=$((n+1)); if [ $n -ge 6 ]; then exit 1; fi; echo \"Cloud Build not ready, retrying in 15s (attempt $n/6)...\"; sleep 15; done"
   }
 }
 

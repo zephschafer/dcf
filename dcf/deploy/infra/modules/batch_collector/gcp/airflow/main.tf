@@ -36,7 +36,7 @@ resource "null_resource" "build" {
   }
 
   provisioner "local-exec" {
-    command = "gcloud builds submit --project ${var.project_id} --region ${var.region} --tag ${var.image_uri} --timeout 600s ${var.build_context}"
+    command = "n=0; until gcloud builds submit --project ${var.project_id} --region ${var.region} --tag ${var.image_uri} --timeout 600s ${var.build_context}; do n=$((n+1)); if [ $n -ge 6 ]; then exit 1; fi; echo \"Cloud Build not ready, retrying in 15s (attempt $n/6)...\"; sleep 15; done"
   }
 }
 
@@ -65,6 +65,11 @@ resource "google_sql_user" "airflow" {
   name     = "airflow"
   instance = google_sql_database_instance.airflow_db.name
   password = var.db_password
+
+  # Airflow standalone creates many owned objects; DROP USER fails if we try to
+  # delete the role explicitly. ABANDON removes it from state and lets the
+  # Cloud SQL instance deletion cascade-drop it instead.
+  deletion_policy = "ABANDON"
 }
 
 resource "google_project_iam_member" "cloudsql_client" {
@@ -83,6 +88,26 @@ resource "google_storage_bucket_iam_member" "warehouse_writer" {
   bucket = var.warehouse_bucket
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${var.sa_email}"
+}
+
+resource "google_project_iam_member" "run_developer" {
+  project = var.project_id
+  role    = "roles/run.developer"
+  member  = "serviceAccount:${var.sa_email}"
+}
+
+resource "google_project_iam_member" "run_invoker" {
+  project = var.project_id
+  role    = "roles/run.invoker"
+  member  = "serviceAccount:${var.sa_email}"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "airflow_invoker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.airflow.name
+  role     = "roles/run.invoker"
+  member   = "allAuthenticatedUsers"
 }
 
 locals {
@@ -198,10 +223,11 @@ resource "google_cloud_run_v2_service" "airflow" {
         }
       }
 
-      # Retry DB check before starting so the container doesn't crash if the
-      # Cloud SQL socket isn't ready yet (IAM propagation can lag).
+      # Wait for Cloud SQL socket, init schema, create admin with the password
+      # from env vars (the Docker entrypoint is bypassed by this custom command,
+      # so _AIRFLOW_WWW_USER_* vars are not processed automatically).
       command = ["/bin/bash", "-c"]
-      args    = ["for i in $(seq 1 60); do airflow db check 2>&1 && break; echo \"Waiting for DB (attempt $i)...\"; sleep 5; done; exec airflow standalone"]
+      args    = ["for i in $(seq 1 60); do airflow db check 2>&1 && break; echo \"Waiting for DB (attempt $i)...\"; sleep 5; done; airflow db migrate; airflow users create --username admin --firstname Admin --lastname Admin --role Admin --email admin@airflow.local --password \"$_AIRFLOW_WWW_USER_PASSWORD\" 2>&1 || true; exec airflow standalone"]
     }
   }
 
