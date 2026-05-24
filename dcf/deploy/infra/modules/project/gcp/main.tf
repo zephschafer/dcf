@@ -22,10 +22,11 @@ provider "google" {
 }
 
 locals {
-  deploy_airflow = var.deploy_airflow
-  sa_email       = google_service_account.dcf_lake.email
-  db_conn_name   = local.deploy_airflow ? google_sql_database_instance.airflow_db[0].connection_name : ""
-  db_url         = "postgresql+psycopg2://airflow:${var.db_password}@/airflow?host=/cloudsql/${local.db_conn_name}"
+  deploy_airflow  = var.deploy_airflow
+  sa_email        = google_service_account.dcf_lake.email
+  db_conn_name    = local.deploy_airflow ? google_sql_database_instance.airflow_db[0].connection_name : ""
+  db_url          = "postgresql+psycopg2://airflow:${var.db_password}@/airflow?host=/cloudsql/${local.db_conn_name}"
+  logs_gcs_folder = "gs://dcf-dags-${var.project_id}/logs"
 }
 
 # ================================================================== #
@@ -368,6 +369,30 @@ resource "google_cloud_run_v2_service" "airflow" {
       env {
         name  = "AIRFLOW__WEBSERVER__AUTH_RATE_LIMITED"
         value = "False"
+      }
+
+      # Remote logging: write task logs to GCS so the Airflow UI can fetch them
+      # via the webserver (port 8080) rather than the log server (port 8793),
+      # which isn't reachable through the local proxy.
+      env {
+        name  = "AIRFLOW__LOGGING__REMOTE_LOGGING"
+        value = "True"
+      }
+
+      env {
+        name  = "AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER"
+        value = local.logs_gcs_folder
+      }
+
+      env {
+        name  = "AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID"
+        value = "google_cloud_default"
+      }
+
+      # Use ADC (the Cloud Run service account) for GCS log access.
+      env {
+        name  = "AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT"
+        value = "google-cloud-platform://?project=${var.project_id}"
       }
 
       env {
