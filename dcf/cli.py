@@ -1217,6 +1217,7 @@ def airflow(
     import time
     import urllib.parse
     from http.server import BaseHTTPRequestHandler, HTTPServer
+    from socketserver import ThreadingMixIn
 
     import requests as _requests
 
@@ -1292,15 +1293,22 @@ def airflow(
             fwd_headers["Authorization"] = f"Bearer {token}"
             fwd_headers["X-Forwarded-Proto"] = target_scheme
 
-            resp = _session.request(
-                self.command,
-                target_url + self.path,
-                headers=fwd_headers,
-                data=body,
-                allow_redirects=False,
-                timeout=30,
-                stream=True,
-            )
+            try:
+                resp = _session.request(
+                    self.command,
+                    target_url + self.path,
+                    headers=fwd_headers,
+                    data=body,
+                    allow_redirects=False,
+                    timeout=120,
+                    stream=True,
+                )
+            except _requests.exceptions.ReadTimeout:
+                self._relay(504, [], b"Airflow is starting up - please refresh in a moment.")
+                return
+            except _requests.exceptions.RequestException as exc:
+                self._relay(502, [], str(exc).encode())
+                return
             resp_body = resp.raw.read(decode_content=True)
             # Rewrite Location so the browser follows redirects through the proxy
             # rather than navigating directly to the Cloud Run URL (which needs auth).
@@ -1327,8 +1335,11 @@ def airflow(
 
     typer.echo(f"Proxying Airflow UI on http://localhost:{port}  (Ctrl+C to stop)")
     typer.echo("Login: admin / <password set during deploy>")
+    class _ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
     try:
-        server = HTTPServer(("127.0.0.1", port), _ProxyHandler)
+        server = _ThreadedHTTPServer(("127.0.0.1", port), _ProxyHandler)
     except OSError as e:
         if e.errno == 48:  # Address already in use — kill the stale proxy and retry
             import os
@@ -1347,7 +1358,7 @@ def airflow(
                     except ProcessLookupError:
                         pass
                 time.sleep(0.5)
-            server = HTTPServer(("127.0.0.1", port), _ProxyHandler)
+            server = _ThreadedHTTPServer(("127.0.0.1", port), _ProxyHandler)
         else:
             raise
     try:
