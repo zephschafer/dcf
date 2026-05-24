@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,35 @@ class CompilePlan:
     @property
     def all_collector_names(self) -> list[str]:
         return self.new + self.changed + self.unchanged
+
+
+def _resolve_collector_env_vars(collector_path: Path, project_root: Path) -> dict[str, str]:
+    """Read {{ env.VAR }} references from a collector YAML and resolve from .env / os.environ.
+
+    Returns only vars that can be resolved. Unresolvable vars are silently omitted;
+    they'll produce a runtime error in the Cloud Run job (which is more informative
+    than failing at compile time when the user may not have all secrets locally).
+    """
+    text = collector_path.read_text()
+    var_names = set(re.findall(r'\{\{\s*env\.(\w+)\s*\}\}', text))
+    if not var_names:
+        return {}
+
+    project_env: dict = {}
+    env_path = project_root / ".env"
+    if env_path.exists():
+        try:
+            from ...state import load_env
+            project_env = load_env()
+        except Exception:
+            pass
+
+    result: dict[str, str] = {}
+    for var_name in sorted(var_names):
+        value = os.environ.get(var_name) or project_env.get(var_name)
+        if value:
+            result[var_name] = value
+    return result
 
 
 def compile_project(
@@ -92,6 +122,9 @@ def compile_project(
                 isinstance(collector.source.connection, CloudSqlConnection)):
             cloud_sql_instances = [collector.source.connection.instance]
 
+        collector_path = project_root / "collectors" / f"{name}.yml"
+        extra_env_vars = _resolve_collector_env_vars(collector_path, project_root)
+
         tf_json = generate_collector_tf_json(
             name=name,
             schedule=collector.deployment.schedule,
@@ -103,6 +136,7 @@ def compile_project(
             java_enabled=False,
             cloud_sql_instances=cloud_sql_instances,
             image_uri=image_uri,
+            extra_env_vars=extra_env_vars,
         )
         tf_json_path.write_text(json.dumps(tf_json, indent=2))
 
@@ -129,6 +163,7 @@ def generate_collector_tf_json(
     java_enabled: bool,
     cloud_sql_instances: list[str],
     image_uri: str,
+    extra_env_vars: dict[str, str] | None = None,
 ) -> dict:
     """Generate the Terraform JSON configuration dict for a single collector.
 
@@ -164,16 +199,20 @@ def generate_collector_tf_json(
     )
 
     # Build the Cloud Run job spec, conditionally including Cloud SQL blocks
+    container_env = [
+        {"name": "COLLECTOR_NAME", "value": name},
+        {"name": "DCF_PROJECT_DIR", "value": "/app"},
+    ]
+    for var_name, var_value in sorted((extra_env_vars or {}).items()):
+        container_env.append({"name": var_name, "value": var_value})
+
     job_template_inner: dict = {
         "service_account": "${local.sa_email}",
         "max_retries": 0,
         "containers": [
             {
                 "image": image_uri,
-                "env": [
-                    {"name": "COLLECTOR_NAME", "value": name},
-                    {"name": "DCF_PROJECT_DIR", "value": "/app"},
-                ],
+                "env": container_env,
                 "resources": {"limits": {"memory": "512Mi"}},
             }
         ],

@@ -323,6 +323,20 @@ resource "google_cloud_run_v2_service" "airflow" {
         value = "30"
       }
 
+      # Proxy fix: trust X-Forwarded-Proto/For headers set by our local proxy.
+      # Without this, Airflow's CSRF check compares http:// vs https:// and rejects POSTs.
+      env {
+        name  = "AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX"
+        value = "True"
+      }
+
+      # Disable auth rate limiting — the local proxy sends all requests from one IP,
+      # so the default "5 per 40 second" limit triggers false positives.
+      env {
+        name  = "AIRFLOW__WEBSERVER__AUTH_RATE_LIMITED"
+        value = "False"
+      }
+
       env {
         name  = "_AIRFLOW_WWW_USER_CREATE"
         value = "true"
@@ -341,7 +355,7 @@ resource "google_cloud_run_v2_service" "airflow" {
       resources {
         limits = {
           memory = "2Gi"
-          cpu    = "1"
+          cpu    = "2"
         }
       }
 

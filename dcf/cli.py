@@ -1267,7 +1267,13 @@ def airflow(
 
     # Shared session reuses TLS connections (keep-alive) across all proxy requests,
     # avoiding per-request connection setup which triggers Cloud Run rate limiting.
+    # Pool size raised to handle the many concurrent sub-requests a browser sends
+    # when loading an Airflow page (static assets, API polling, log fetching).
     _session = _requests.Session()
+    from requests.adapters import HTTPAdapter as _HTTPAdapter
+    _adapter = _HTTPAdapter(pool_connections=1, pool_maxsize=32, max_retries=0)
+    _session.mount("https://", _adapter)
+    _session.mount("http://", _adapter)
 
     def _rewrite_location(v):
         for scheme in ("https://", "http://"):
