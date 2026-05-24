@@ -6,7 +6,7 @@ source:
   type: sql
   connection:
     type: cloud_sql
-    instance: "{{ env.GCP_PROJECT }}:us-central1:dcf-airflow-db"
+    instance: "{{ dcf.project_id }}:{{ dcf.region }}:dcf-airflow-db"
     database: airflow
     user: airflow
     password: "{{ env.AIRFLOW_DB_PASSWORD }}"

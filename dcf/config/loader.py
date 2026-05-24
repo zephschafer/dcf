@@ -18,20 +18,49 @@ def _project_config() -> dict:
         return {}
 
 
+def _dcf_vars() -> dict:
+    """Return dcf-managed variables available as {{ dcf.VAR }} in collector YAMLs."""
+    try:
+        from ..state import load_state
+        state = load_state()
+        gcp = state.get("gcp", {})
+        return {
+            "project_id": gcp.get("project_id", ""),
+            "region": gcp.get("region", ""),
+        }
+    except Exception:
+        return {}
+
+
 def _resolve_env(
     value: str,
     project_cfg: dict,
     on_missing: Callable[[str], str] | None = None,
 ) -> str:
-    """Replace {{ env.VAR }} placeholders.
+    """Replace {{ env.VAR }} and {{ dcf.VAR }} placeholders.
 
-    Resolution order:
+    {{ env.VAR }} resolution order:
       1. OS environment variable
       2. .env file key (VAR lowercased, e.g. PORTLANDMAPS_API_KEY → portlandmaps_api_key)
       3. on_missing callback (if provided), which may prompt the user
+
+    {{ dcf.VAR }} resolves against dcf-managed state (project_id, region).
     """
     import re
-    def replacer(match):
+
+    dcf = _dcf_vars()
+
+    def dcf_replacer(match):
+        var = match.group(1).strip()
+        resolved = dcf.get(var)
+        if not resolved:
+            raise EnvironmentError(
+                f"'dcf.{var}' is not available — ensure the project is initialized "
+                f"and GCP is provisioned"
+            )
+        return resolved
+
+    def env_replacer(match):
         var = match.group(1).strip()
         resolved = os.environ.get(var)
         if resolved is None:
@@ -46,7 +75,9 @@ def _resolve_env(
                 f"or set '{var.lower()}' in .env"
             )
         return resolved
-    return re.sub(r"\{\{\s*env\.(\w+)\s*\}\}", replacer, value)
+
+    value = re.sub(r"\{\{\s*dcf\.(\w+)\s*\}\}", dcf_replacer, value)
+    return re.sub(r"\{\{\s*env\.(\w+)\s*\}\}", env_replacer, value)
 
 
 def _resolve_env_in(
@@ -77,14 +108,16 @@ def load_collector(
 
 
 def _strip_env_placeholders(obj):
-    """Replace {{ env.VAR }} with a placeholder string for structural validation."""
+    """Replace {{ env.VAR }} and {{ dcf.VAR }} with placeholder strings for structural validation."""
     import re
     if isinstance(obj, dict):
         return {k: _strip_env_placeholders(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_strip_env_placeholders(v) for v in obj]
     if isinstance(obj, str):
-        return re.sub(r"\{\{\s*env\.\w+\s*\}\}", "<env>", obj)
+        obj = re.sub(r"\{\{\s*env\.\w+\s*\}\}", "<env>", obj)
+        obj = re.sub(r"\{\{\s*dcf\.\w+\s*\}\}", "<dcf>", obj)
+        return obj
     return obj
 
 

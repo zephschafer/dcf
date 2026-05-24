@@ -315,7 +315,8 @@ def _tf_apply_project(
     (work_dir / "terraform.tfvars.json").write_text(json.dumps(tfvars, indent=2))
 
     env = _tf_env()
-    _tf_run(["terraform", "init", "-reconfigure"], work_dir, env)
+    if not (work_dir / ".terraform").exists():
+        _tf_run(["terraform", "init", "-reconfigure"], work_dir, env)
     _import_existing_project_resources(project_id, region, new_collectors or [], work_dir, env)
     _tf_run(["terraform", "apply", "-auto-approve"], work_dir, env)
 
