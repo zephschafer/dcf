@@ -74,93 +74,121 @@ def deploy(
     project_root: Path,
     gcp_config: dict,
 ) -> dict:
-    """Provision all GCP resources via a single Terraform apply, write DAG to GCS.
+    """Compile + Terraform apply for a single collector.
 
-    Returns the deployment state dict to write into project.yml.
+    Returns the deployment state dict to write into state.yml.
     """
+    from .compile import compile_project
+
     project_id = gcp_config["project_id"]
     region = gcp_config["region"]
-    dags_bucket = gcp_config.get("dags_bucket") or gcp_config["warehouse_bucket"]
 
-    image_uri = _image_uri(project_id, region, collector_name)
-
-    print(f"  Syncing build context for '{collector_name}'...", flush=True)
-    build_context = _sync_build_context(project_root, collector_name, gcp_config)
-    content_hash = _content_hash(build_context)
-
-    from ...config.models import SqlSource, CloudSqlConnection
-    from ...config.loader import load_collector
-    _collector = load_collector(project_root / "collectors" / f"{collector_name}.yml")
-    cloud_sql_instances = []
-    if (isinstance(_collector.source, SqlSource) and
-            isinstance(_collector.source.connection, CloudSqlConnection)):
-        cloud_sql_instances = [_collector.source.connection.instance]
-
-    collectors = _collectors_map(gcp_config, project_root, override={
-        collector_name: {
-            "image_uri": image_uri,
-            "build_context": str(build_context),
-            "content_hash": content_hash,
-            "java_enabled": False,
-            "cloud_sql_instances": cloud_sql_instances,
-        }
-    })
+    print(f"  Compiling '{collector_name}'...", flush=True)
+    plan = compile_project(project_root, gcp_config, filter_names=[collector_name])
 
     credentials = _generate_airflow_credentials(project_root)
 
-    print(f"  Applying Terraform (all project resources)...", flush=True)
+    print(f"  Applying Terraform...", flush=True)
     print(f"  (First deploy may take several minutes)", flush=True)
-    outputs = _tf_apply_project(project_id, region, collectors, credentials, project_root)
+    outputs = _tf_apply_project(project_id, region, True, credentials, project_root,
+                                new_collectors=plan.new)
 
-    job_name = outputs["job_names"][collector_name]
     airflow_url = outputs.get("airflow_url", "")
     if airflow_url:
         print(f"  Airflow UI: {airflow_url}", flush=True)
 
-    print(f"  Writing DAG to GCS...", flush=True)
-    dag_content = _gcp_dag_content(
-        collector_name=collector_name,
-        schedule=schedule,
-        paused=paused,
-        project_id=project_id,
-        region=region,
-        job_name=job_name,
-    )
-    _write_dag_gcs(dag_content, collector_name, dags_bucket)
+    job_name = _expected_job_name(collector_name)
+    content_hash = plan.hashes.get(collector_name, gcp_config.get("deployments", {}).get(collector_name, {}).get("content_hash", ""))
+
+    from ...config.models import SqlSource, CloudSqlConnection
+    from ...config.loader import load_collector
+    _collector = load_collector(project_root / "collectors" / f"{collector_name}.yml")
+    cloud_sql_instances: list[str] = []
+    if (isinstance(_collector.source, SqlSource) and
+            isinstance(_collector.source.connection, CloudSqlConnection)):
+        cloud_sql_instances = [_collector.source.connection.instance]
 
     return {
         "schedule": schedule,
         "dag_id": collector_name,
         "cloud_run_job": job_name,
         "airflow_url": airflow_url,
-        "airflow_dags_bucket": dags_bucket,
-        "image_uri": image_uri,
+        "image_uri": _image_uri(project_id, region, collector_name),
         "content_hash": content_hash,
         "java_enabled": False,
-        "build_context": str(build_context),
+        "build_context": str(_BUILD_DIR / "gcp" / collector_name),
         "cloud_sql_instances": cloud_sql_instances,
         "deployed_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
     }
 
 
-def undeploy(collector_name: str, deployment: dict, gcp_config: dict, project_root: Path) -> None:
-    """Remove a collector by re-applying Terraform without it, then delete the DAG from GCS."""
+def deploy_all(project_root: Path, gcp_config: dict) -> dict[str, dict]:
+    """Full-project compile + single Terraform apply for all collectors.
+
+    Returns a dict of collector_name → state dict for every new/changed collector.
+    Unchanged collectors are skipped (already up to date in state).
+    """
+    from .compile import compile_project
+
     project_id = gcp_config["project_id"]
     region = gcp_config["region"]
-    dags_bucket = gcp_config.get("dags_bucket") or gcp_config["warehouse_bucket"]
 
-    collectors = _collectors_map(gcp_config, project_root)
-    collectors.pop(collector_name, None)
+    plan = compile_project(project_root, gcp_config, filter_names=None)
+    deploy_airflow = len(plan.all_collector_names) > 0
+    credentials = _generate_airflow_credentials(project_root) if deploy_airflow else {}
+
+    print(f"  Applying Terraform...", flush=True)
+    print(f"  (First deploy may take several minutes)", flush=True)
+    outputs = _tf_apply_project(project_id, region, deploy_airflow, credentials, project_root,
+                                new_collectors=plan.new)
+
+    airflow_url = outputs.get("airflow_url", "")
+    if airflow_url:
+        print(f"  Airflow UI: {airflow_url}", flush=True)
+
+    results: dict[str, dict] = {}
+    for name in plan.new + plan.changed:
+        collector = plan.collectors[name]
+
+        from ...config.models import SqlSource, CloudSqlConnection
+        cloud_sql_instances: list[str] = []
+        if (isinstance(collector.source, SqlSource) and
+                isinstance(collector.source.connection, CloudSqlConnection)):
+            cloud_sql_instances = [collector.source.connection.instance]
+
+        results[name] = {
+            "schedule": collector.deployment.schedule,
+            "dag_id": name,
+            "cloud_run_job": _expected_job_name(name),
+            "airflow_url": airflow_url,
+            "image_uri": _image_uri(project_id, region, name),
+            "content_hash": plan.hashes[name],
+            "java_enabled": False,
+            "build_context": str(_BUILD_DIR / "gcp" / name),
+            "cloud_sql_instances": cloud_sql_instances,
+            "deployed_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+        }
+
+    return results
+
+
+def undeploy(collector_name: str, deployment: dict, gcp_config: dict, project_root: Path) -> None:
+    """Remove a collector by deleting its .tf.json and re-applying Terraform."""
+    project_id = gcp_config["project_id"]
+    region = gcp_config["region"]
+
+    tf_dir = _tf_state_dir(project_root) / "gcp"
+    tf_json_path = tf_dir / f"collector_{collector_name}.tf.json"
+    if tf_json_path.exists():
+        tf_json_path.unlink()
+
+    remaining = list(tf_dir.glob("collector_*.tf.json"))
+    deploy_airflow = len(remaining) > 0
+    credentials = _generate_airflow_credentials(project_root) if deploy_airflow else {}
 
     print(f"  Applying Terraform (removing '{collector_name}')...", flush=True)
-    if collectors:
-        credentials = _generate_airflow_credentials(project_root)
-        _tf_apply_project(project_id, region, collectors, credentials, project_root)
-    else:
-        _tf_apply_project(project_id, region, {}, {}, project_root)
-
-    print(f"  Deleting DAG from GCS...", flush=True)
-    _delete_dag_gcs(collector_name, dags_bucket)
+    _tf_apply_project(project_id, region, deploy_airflow, credentials, project_root,
+                      new_collectors=[])
 
 
 # ------------------------------------------------------------------ #
@@ -216,35 +244,6 @@ def _content_hash(build_context: Path) -> str:
     return h.hexdigest()
 
 
-def _collectors_map(
-    gcp_config: dict,
-    project_root: Path,
-    override: dict | None = None,
-) -> dict:
-    """Build the full collectors map from stored deployments, plus optional overrides."""
-    project_id = gcp_config["project_id"]
-    region = gcp_config["region"]
-    collectors: dict = {}
-
-    for name, dep in gcp_config.get("deployments", {}).items():
-        if dep.get("type", "batch") != "batch":
-            continue
-        build_ctx = dep.get("build_context") or str(_BUILD_DIR / "gcp" / name)
-        Path(build_ctx).mkdir(parents=True, exist_ok=True)
-        collectors[name] = {
-            "image_uri": dep.get("image_uri") or _image_uri(project_id, region, name),
-            "build_context": build_ctx,
-            "content_hash": dep.get("content_hash", ""),
-            "java_enabled": dep.get("java_enabled", False),
-            "cloud_sql_instances": dep.get("cloud_sql_instances", []),
-        }
-
-    if override:
-        collectors.update(override)
-
-    return collectors
-
-
 # ------------------------------------------------------------------ #
 # Terraform: single project state                                      #
 # ------------------------------------------------------------------ #
@@ -285,14 +284,15 @@ def _tf_run(cmd: list[str], work_dir: Path, env: dict) -> None:
 def _tf_apply_project(
     project_id: str,
     region: str,
-    collectors: dict,
+    deploy_airflow: bool,
     airflow_creds: dict,
     project_root: Path,
+    new_collectors: list[str] | None = None,
 ) -> dict:
     """Provision all project resources via a single Terraform apply.
 
-    collectors: map of collector_name -> {image_uri, build_context, content_hash, java_enabled}
-    airflow_creds: {db_password, admin_password, fernet_key} (ignored when collectors is empty)
+    Per-collector resources are defined by .tf.json files already written to work_dir
+    by the compile step. Only platform resources (SA, buckets, Airflow) are in main.tf.
     Returns flattened terraform output dict.
     """
     work_dir = _tf_state_dir(project_root) / "gcp"
@@ -301,11 +301,10 @@ def _tf_apply_project(
 
     _copy_module_to_work_dir(_PROJECT_MODULE_DIR / "gcp", work_dir)
 
-    deploy_airflow = bool(collectors)
     tfvars: dict = {
         "project_id": project_id,
         "region": region,
-        "collectors": collectors,
+        "deploy_airflow": deploy_airflow,
         "airflow_image_uri": _airflow_image_uri(project_id, region) if deploy_airflow else "",
         "airflow_build_context": str(_airflow_build_context()) if deploy_airflow else "",
         "airflow_content_hash": _airflow_content_hash() if deploy_airflow else "",
@@ -317,7 +316,7 @@ def _tf_apply_project(
 
     env = _tf_env()
     _tf_run(["terraform", "init", "-reconfigure"], work_dir, env)
-    _import_existing_project_resources(project_id, region, collectors, work_dir, env)
+    _import_existing_project_resources(project_id, region, new_collectors or [], work_dir, env)
     _tf_run(["terraform", "apply", "-auto-approve"], work_dir, env)
 
     raw = subprocess.run(
@@ -331,85 +330,136 @@ def _tf_apply_project(
 def _import_existing_project_resources(
     project_id: str,
     region: str,
-    collectors: dict,
+    new_collectors: list[str],
     work_dir: Path,
     env: dict,
 ) -> None:
-    """Import any GCP resources that already exist into Terraform state to avoid 409 errors."""
+    """Import pre-existing GCP resources into Terraform state to avoid 409 conflicts.
+
+    Optimizations vs the old approach:
+    - Runs `terraform state list` once; skips gcloud checks for resources already in state.
+    - Migrates old for_each addresses (collector["name"]) to per-file addresses (collector_name).
+    - Only checks Cloud Run job imports for new_collectors, not all collectors.
+    """
+    import re as _re
+
+    state_result = subprocess.run(
+        ["terraform", "state", "list"],
+        cwd=str(work_dir), env=env, capture_output=True, text=True,
+    )
+    existing = set(state_result.stdout.splitlines())
+
+    # Migrate old for_each addresses to per-file addresses (one-time, idempotent)
+    foreach_re = _re.compile(
+        r'^(google_cloud_run_v2_job|local_file|null_resource)\.collector\["(.+)"\]$'
+    )
+    for addr in list(existing):
+        m = foreach_re.match(addr)
+        if not m:
+            continue
+        resource_type, collector_name = m.group(1), m.group(2)
+        new_addr = f"{resource_type}.collector_{collector_name}"
+        result = subprocess.run(
+            ["terraform", "state", "mv", addr, new_addr],
+            cwd=str(work_dir), env=env, capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            existing.discard(addr)
+            existing.add(new_addr)
+            logger.info("Migrated state: %s → %s", addr, new_addr)
+        else:
+            logger.warning("state mv failed for %s: %s", addr, result.stderr[-200:])
+
+    # Platform resources: skip gcloud check entirely if already in state
     sa_email = f"dcf-lake@{project_id}.iam.gserviceaccount.com"
-    _tf_import_if_exists(
-        work_dir, env,
+    _tf_import_if_not_in_state(
+        work_dir, env, existing,
         "google_service_account.dcf_lake",
         f"projects/{project_id}/serviceAccounts/{sa_email}",
         ["gcloud", "iam", "service-accounts", "describe", sa_email, "--project", project_id],
     )
-    _tf_import_if_exists(
-        work_dir, env,
+    _tf_import_if_not_in_state(
+        work_dir, env, existing,
         "google_secret_manager_secret.sa_key",
         f"projects/{project_id}/secrets/dcf-lake-sa-key",
         ["gcloud", "secrets", "describe", "dcf-lake-sa-key", "--project", project_id],
     )
-    _tf_import_if_exists(
-        work_dir, env,
+    _tf_import_if_not_in_state(
+        work_dir, env, existing,
         "google_storage_bucket.warehouse",
         f"dcf-warehouse-{project_id}",
         ["gcloud", "storage", "buckets", "describe",
          f"gs://dcf-warehouse-{project_id}", "--project", project_id],
     )
-    _tf_import_if_exists(
-        work_dir, env,
+    _tf_import_if_not_in_state(
+        work_dir, env, existing,
         "google_storage_bucket.dags",
         f"dcf-dags-{project_id}",
         ["gcloud", "storage", "buckets", "describe",
          f"gs://dcf-dags-{project_id}", "--project", project_id],
     )
-    _tf_import_if_exists(
-        work_dir, env,
+    _tf_import_if_not_in_state(
+        work_dir, env, existing,
         "google_artifact_registry_repository.dcf_runner",
         f"projects/{project_id}/locations/{region}/repositories/dcf-runner",
         ["gcloud", "artifacts", "repositories", "describe", "dcf-runner",
          "--location", region, "--project", project_id],
     )
-    for name in collectors:
-        job_name = _expected_job_name(name)
-        _tf_import_if_exists(
-            work_dir, env,
-            f'google_cloud_run_v2_job.collector["{name}"]',
-            f"projects/{project_id}/locations/{region}/jobs/{job_name}",
-            ["gcloud", "run", "jobs", "describe", job_name,
-             "--region", region, "--project", project_id],
-        )
-    _tf_import_if_exists(
-        work_dir, env,
+    _tf_import_if_not_in_state(
+        work_dir, env, existing,
         "google_sql_database_instance.airflow_db[0]",
         f"{project_id}/dcf-airflow-db",
         ["gcloud", "sql", "instances", "describe", "dcf-airflow-db", "--project", project_id],
     )
-    _tf_import_if_exists(
-        work_dir, env,
+    _tf_import_if_not_in_state(
+        work_dir, env, existing,
         "google_sql_database.airflow[0]",
         f"{project_id}/dcf-airflow-db/airflow",
         ["gcloud", "sql", "databases", "describe", "airflow",
          "--instance", "dcf-airflow-db", "--project", project_id],
     )
-    _tf_import_if_exists(
-        work_dir, env,
+    _tf_import_if_not_in_state(
+        work_dir, env, existing,
         "google_sql_user.airflow[0]",
         f"{project_id}/dcf-airflow-db/airflow",
         ["gcloud", "sql", "instances", "describe", "dcf-airflow-db", "--project", project_id],
     )
-    _tf_import_if_exists(
-        work_dir, env,
+    _tf_import_if_not_in_state(
+        work_dir, env, existing,
         "google_cloud_run_v2_service.airflow[0]",
         f"projects/{project_id}/locations/{region}/services/dcf-airflow",
         ["gcloud", "run", "services", "describe", "dcf-airflow",
          "--region", region, "--project", project_id],
     )
 
+    # Per-collector: only check new collectors (not all collectors)
+    for name in new_collectors:
+        job_name = _expected_job_name(name)
+        _tf_import_if_not_in_state(
+            work_dir, env, existing,
+            f"google_cloud_run_v2_job.collector_{name}",
+            f"projects/{project_id}/locations/{region}/jobs/{job_name}",
+            ["gcloud", "run", "jobs", "describe", job_name,
+             "--region", region, "--project", project_id],
+        )
 
-def _tf_import_if_exists(
-    work_dir: Path, env: dict, resource_addr: str, resource_id: str, check_cmd: list,
+
+def _tf_import_if_not_in_state(
+    work_dir: Path,
+    env: dict,
+    existing_addresses: set[str],
+    resource_addr: str,
+    resource_id: str,
+    check_cmd: list,
 ) -> None:
+    """Import resource only if it is not already in Terraform state.
+
+    Skips the gcloud API call entirely when the resource is already tracked,
+    eliminating the main source of per-deploy latency.
+    """
+    if resource_addr in existing_addresses:
+        logger.debug("%s already in Terraform state, skipping import", resource_addr)
+        return
     if subprocess.run(check_cmd, capture_output=True).returncode != 0:
         return
     result = subprocess.run(
@@ -422,61 +472,6 @@ def _tf_import_if_exists(
         logger.info("%s already in Terraform state", resource_addr)
     else:
         logger.warning("terraform import %s returned non-zero: %s", resource_addr, result.stderr[-300:])
-
-
-# ------------------------------------------------------------------ #
-# GCS DAG management                                                   #
-# ------------------------------------------------------------------ #
-
-def _dag_gcs_path(collector_name: str) -> str:
-    return f"{collector_name}.py"
-
-
-def _gcp_dag_content(
-    collector_name: str, schedule: str, paused: bool,
-    project_id: str, region: str, job_name: str,
-) -> str:
-    paused_str = "True" if paused else "False"
-    return f"""\
-# Generated by dcf — do not edit manually
-from datetime import datetime
-from airflow import DAG
-from airflow.providers.google.cloud.operators.cloud_run import CloudRunExecuteJobOperator
-
-with DAG(
-    dag_id="{collector_name}",
-    schedule_interval="{schedule}",
-    start_date=datetime(2024, 1, 1),
-    catchup=False,
-    is_paused_upon_creation={paused_str},
-    tags=["dcf"],
-) as dag:
-    run_job = CloudRunExecuteJobOperator(
-        task_id="run_{collector_name}",
-        project_id="{project_id}",
-        region="{region}",
-        job_name="{job_name}",
-    )
-"""
-
-
-def _write_dag_gcs(dag_content: str, collector_name: str, warehouse_bucket: str) -> None:
-    from google.cloud import storage
-    client = storage.Client()
-    bucket = client.bucket(warehouse_bucket)
-    blob = bucket.blob(_dag_gcs_path(collector_name))
-    blob.upload_from_string(dag_content, content_type="text/plain")
-    logger.info("Uploaded DAG to gs://%s/%s", warehouse_bucket, _dag_gcs_path(collector_name))
-
-
-def _delete_dag_gcs(collector_name: str, warehouse_bucket: str) -> None:
-    from google.cloud import storage
-    client = storage.Client()
-    bucket = client.bucket(warehouse_bucket)
-    blob = bucket.blob(_dag_gcs_path(collector_name))
-    if blob.exists():
-        blob.delete()
-        logger.info("Deleted DAG gs://%s/%s", warehouse_bucket, _dag_gcs_path(collector_name))
 
 
 # ------------------------------------------------------------------ #

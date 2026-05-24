@@ -23,7 +23,3 @@ output "airflow_url" {
   value       = local.deploy_airflow ? google_cloud_run_v2_service.airflow[0].uri : ""
 }
 
-output "job_names" {
-  description = "Map of collector name to Cloud Run job name"
-  value       = { for k, v in google_cloud_run_v2_job.collector : k => v.name }
-}

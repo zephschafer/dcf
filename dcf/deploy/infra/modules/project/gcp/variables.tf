@@ -8,21 +8,13 @@ variable "region" {
   description = "GCP region"
 }
 
-# ---- Collectors (empty map = lake-only apply, no Airflow) ----
-
-variable "collectors" {
-  type = map(object({
-    image_uri           = string
-    build_context       = string
-    content_hash        = string
-    java_enabled        = bool
-    cloud_sql_instances = list(string)
-  }))
-  default     = {}
-  description = "Map of collector name to build configuration. Empty = no Airflow deployed."
+variable "deploy_airflow" {
+  type        = bool
+  default     = false
+  description = "Whether to deploy the Airflow stack (Cloud SQL + Cloud Run service). Set true when any collectors are active."
 }
 
-# ---- Airflow build (only required when collectors is non-empty) ----
+# ---- Airflow build (only required when deploy_airflow is true) ----
 
 variable "airflow_image_uri" {
   type        = string

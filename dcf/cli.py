@@ -653,7 +653,7 @@ def _ensure_gcp_provisioned(profile: dict) -> None:
             try:
                 typer.echo("[dcf] Provisioning missing lake resources via Terraform...")
                 from .deploy.gcp.batch_deploy import _tf_apply_project
-                outputs = _tf_apply_project(gcp["project_id"], gcp["region"], {}, {}, _project_root())
+                outputs = _tf_apply_project(gcp["project_id"], gcp["region"], False, {}, _project_root())
                 gcp.update({
                     "sa_email": outputs.get("sa_email") or gcp.get("sa_email"),
                     "secret_name": outputs.get("secret_name") or gcp.get("secret_name"),
@@ -716,7 +716,7 @@ def _ensure_gcp_provisioned(profile: dict) -> None:
         typer.echo("[dcf] Provisioning lake infrastructure via Terraform...")
         from .deploy.gcp.batch_deploy import _tf_apply_project
         project_root = _project_root()
-        outputs = _tf_apply_project(project_id, region, {}, {}, project_root)
+        outputs = _tf_apply_project(project_id, region, False, {}, project_root)
 
         gcp.update({
             "region": region,
@@ -736,6 +736,38 @@ def _ensure_gcp_provisioned(profile: dict) -> None:
         raise typer.Exit(1)
 
 
+@app.command(name="compile")
+def compile_cmd(
+    collector_name: str | None = typer.Argument(None, help="Collector name (without .yml), or omit for all"),
+    profile: str = typer.Option("default", "--profile", "-p", help="Profile name from profiles.yml"),
+):
+    """Parse project config and preview what would be deployed to GCP."""
+    try:
+        from .profiles import load_profile
+        prof = load_profile(profile)
+        if prof.get("type") == "gcp":
+            _ensure_gcp_provisioned(prof)
+    except (FileNotFoundError, KeyError):
+        pass
+
+    gcp = _require_gcp_config()
+    from .deploy.gcp.compile import compile_project
+
+    filter_names = [collector_name] if collector_name else None
+    plan = compile_project(_project_root(), gcp, filter_names=filter_names)
+
+    if plan.new:
+        typer.echo(f"  + {', '.join(plan.new)}  (new)")
+    if plan.changed:
+        typer.echo(f"  ~ {', '.join(plan.changed)}  (changed)")
+    if plan.unchanged:
+        typer.echo(f"  = {', '.join(plan.unchanged)}  (unchanged)")
+    if plan.deleted:
+        typer.echo(f"  - {', '.join(plan.deleted)}  (deleted)")
+    if not any([plan.new, plan.changed, plan.deleted]):
+        typer.echo("Nothing to deploy — all collectors are up to date.")
+
+
 @app.command()
 def deploy(
     collector_name: str | None = typer.Argument(None, help="Collector name (without .yml), or omit to deploy all"),
@@ -751,6 +783,41 @@ def deploy(
 
 def _deploy_all(profile_name: str = "default") -> None:
     """Deploy every collector YAML that has a deployment: block."""
+    try:
+        from .profiles import load_profile
+        prof = load_profile(profile_name)
+        if prof.get("type") == "gcp":
+            _ensure_gcp_provisioned(prof)
+    except (FileNotFoundError, KeyError):
+        pass
+
+    catalog = _get_catalog()
+
+    if catalog == "gcp":
+        gcp = _require_gcp_config()
+        from .deploy.gcp import batch_deploy
+        typer.echo("Compiling project...")
+        try:
+            results = batch_deploy.deploy_all(_project_root(), gcp)
+        except Exception as e:
+            typer.echo(f"\nDeploy failed: {e}", err=True)
+            raise typer.Exit(1)
+
+        gcp_state = _load_gcp_state()
+        for name, state_dict in results.items():
+            airflow_url = state_dict.pop("airflow_url", "")
+            gcp_state.setdefault("deployments", {})[name] = state_dict
+            if airflow_url:
+                gcp_state["airflow_url"] = airflow_url
+        _save_gcp_state(gcp_state)
+
+        if results:
+            typer.echo(f"\nDeployed {len(results)} collector(s): {', '.join(results)}")
+        else:
+            typer.echo("All collectors are up to date — nothing to deploy.")
+        return
+
+    # Local path: deploy each collector individually
     collectors_dir = _collectors_dir()
     from .config import load_collector
 
@@ -901,12 +968,10 @@ def _deploy_one(collector_name: str, profile_name: str = "default") -> None:
 
     gcp = _load_gcp_state()
     airflow_url = state.pop("airflow_url", "")
-    airflow_dags_bucket = state.pop("airflow_dags_bucket", "")
+    state.pop("airflow_dags_bucket", None)  # no longer written; DAG delivery via Terraform
     gcp.setdefault("deployments", {})[collector_name] = state
     if airflow_url:
         gcp["airflow_url"] = airflow_url
-    if airflow_dags_bucket:
-        gcp["airflow_dags_bucket"] = airflow_dags_bucket
     _save_gcp_state(gcp)
 
     typer.echo(f"\nDeployed '{collector_name}' successfully.")

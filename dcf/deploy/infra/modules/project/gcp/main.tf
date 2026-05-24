@@ -22,7 +22,7 @@ provider "google" {
 }
 
 locals {
-  deploy_airflow = length(var.collectors) > 0
+  deploy_airflow = var.deploy_airflow
   sa_email       = google_service_account.dcf_lake.email
   db_conn_name   = local.deploy_airflow ? google_sql_database_instance.airflow_db[0].connection_name : ""
   db_url         = "postgresql+psycopg2://airflow:${var.db_password}@/airflow?host=/cloudsql/${local.db_conn_name}"
@@ -131,6 +131,12 @@ resource "google_storage_bucket" "dags" {
   uniform_bucket_level_access = true
 }
 
+resource "google_storage_bucket_object" "dcf_dags_factory" {
+  bucket = google_storage_bucket.dags.name
+  name   = "dcf_dags.py"
+  source = "${path.module}/templates/dcf_dags.py"
+}
+
 resource "google_artifact_registry_repository" "dcf_runner" {
   depends_on    = [google_project_service.artifactregistry]
   project       = var.project_id
@@ -172,86 +178,6 @@ resource "google_project_iam_member" "run_invoker" {
   project = var.project_id
   role    = "roles/run.invoker"
   member  = "serviceAccount:${local.sa_email}"
-}
-
-# ================================================================== #
-# Collectors: Cloud Build + Cloud Run jobs                             #
-# ================================================================== #
-
-resource "local_file" "collector_dockerfile" {
-  for_each = var.collectors
-
-  content  = templatefile("${path.module}/templates/batch_collector.Dockerfile.tftpl", {
-    java_enabled = each.value.java_enabled
-  })
-  filename = "${each.value.build_context}/Dockerfile"
-}
-
-resource "null_resource" "collector_build" {
-  for_each   = var.collectors
-  depends_on = [local_file.collector_dockerfile, google_artifact_registry_repository.dcf_runner]
-
-  triggers = {
-    content_hash = each.value.content_hash
-    java_enabled = tostring(each.value.java_enabled)
-  }
-
-  provisioner "local-exec" {
-    command = "n=0; until gcloud builds submit --project ${var.project_id} --region ${var.region} --tag ${each.value.image_uri} --timeout 600s ${each.value.build_context}; do n=$((n+1)); if [ $n -ge 6 ]; then exit 1; fi; echo \"Cloud Build not ready, retrying in 15s (attempt $n/6)...\"; sleep 15; done"
-  }
-}
-
-resource "google_cloud_run_v2_job" "collector" {
-  for_each   = var.collectors
-  depends_on = [null_resource.collector_build]
-
-  name     = "dcf-job-${replace(each.key, "_", "-")}"
-  location = var.region
-
-  template {
-    template {
-      service_account = local.sa_email
-      max_retries     = 0
-
-      dynamic "volumes" {
-        for_each = length(each.value.cloud_sql_instances) > 0 ? [1] : []
-        content {
-          name = "cloudsql"
-          cloud_sql_instance {
-            instances = each.value.cloud_sql_instances
-          }
-        }
-      }
-
-      containers {
-        image = each.value.image_uri
-
-        env {
-          name  = "COLLECTOR_NAME"
-          value = each.key
-        }
-
-        env {
-          name  = "DCF_PROJECT_DIR"
-          value = "/app"
-        }
-
-        resources {
-          limits = {
-            memory = "512Mi"
-          }
-        }
-
-        dynamic "volume_mounts" {
-          for_each = length(each.value.cloud_sql_instances) > 0 ? [1] : []
-          content {
-            name       = "cloudsql"
-            mount_path = "/cloudsql"
-          }
-        }
-      }
-    }
-  }
 }
 
 # ================================================================== #
