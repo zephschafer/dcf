@@ -1320,13 +1320,16 @@ def airflow(
             self._relay(resp.status_code, resp_headers, resp_body)
 
         def _relay(self, status, headers, body):
-            self.send_response(status)
-            for k, v in headers:
-                if k.lower() != "content-length":
-                    self.send_header(k, v)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                for k, v in headers:
+                    if k.lower() != "content-length":
+                        self.send_header(k, v)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except BrokenPipeError:
+                pass
 
         do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = _proxy
 

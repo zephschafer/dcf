@@ -252,6 +252,10 @@ resource "google_cloud_run_v2_service" "airflow" {
   template {
     service_account = local.sa_email
 
+    annotations = {
+      "run.googleapis.com/cpu-throttling" = "false"
+    }
+
     scaling {
       min_instance_count = 1
       max_instance_count = 1
