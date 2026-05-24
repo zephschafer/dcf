@@ -1212,12 +1212,13 @@ def airflow(
     port: int = typer.Option(8080, "--port", "-p", help="Local port to proxy on"),
 ):
     """Open a local proxy to the GCP Airflow UI (requires gcloud auth)."""
-    import http.client
     import subprocess
     import threading
     import time
     import urllib.parse
     from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    import requests as _requests
 
     gcp = _load_gcp_state()
     if gcp.get("setup_status") != "complete":
@@ -1263,6 +1264,17 @@ def airflow(
     local_origin = f"http://localhost:{port}"
     target_scheme = urllib.parse.urlparse(target_url).scheme
 
+    # Shared session reuses TLS connections (keep-alive) across all proxy requests,
+    # avoiding per-request connection setup which triggers Cloud Run rate limiting.
+    _session = _requests.Session()
+
+    def _rewrite_location(v):
+        for scheme in ("https://", "http://"):
+            prefix = scheme + target_host
+            if v.startswith(prefix):
+                return local_origin + v[len(prefix):]
+        return v
+
     class _ProxyHandler(BaseHTTPRequestHandler):
         def _proxy(self):
             token = token_cache.get()
@@ -1280,34 +1292,29 @@ def airflow(
             fwd_headers["Authorization"] = f"Bearer {token}"
             fwd_headers["X-Forwarded-Proto"] = target_scheme
 
-            conn = (http.client.HTTPSConnection(target_host, timeout=30)
-                    if target_scheme == "https"
-                    else http.client.HTTPConnection(target_host, timeout=30))
-            try:
-                conn.request(self.command, self.path, body=body, headers=fwd_headers)
-                resp = conn.getresponse()
-                resp_body = resp.read()
-                # Rewrite Location so the browser follows redirects through the proxy
-                # rather than navigating directly to the Cloud Run URL (which needs auth).
-                # Match by host regardless of scheme in case Airflow downgrades to http.
-                def _rewrite_location(v):
-                    for scheme in ("https://", "http://"):
-                        prefix = scheme + target_host
-                        if v.startswith(prefix):
-                            return local_origin + v[len(prefix):]
-                    return v
-                resp_headers = [
-                    (k, _rewrite_location(v) if k.lower() == "location" else v)
-                    for k, v in resp.getheaders()
-                ]
-                self._relay(resp.status, resp_headers, resp_body)
-            finally:
-                conn.close()
+            resp = _session.request(
+                self.command,
+                target_url + self.path,
+                headers=fwd_headers,
+                data=body,
+                allow_redirects=False,
+                timeout=30,
+                stream=True,
+            )
+            resp_body = resp.raw.read(decode_content=True)
+            # Rewrite Location so the browser follows redirects through the proxy
+            # rather than navigating directly to the Cloud Run URL (which needs auth).
+            resp_headers = [
+                (k, _rewrite_location(v) if k.lower() == "location" else v)
+                for k, v in resp.headers.items()
+                if k.lower() not in _HOP_BY_HOP and k.lower() != "content-encoding"
+            ]
+            self._relay(resp.status_code, resp_headers, resp_body)
 
         def _relay(self, status, headers, body):
             self.send_response(status)
             for k, v in headers:
-                if k.lower() not in _HOP_BY_HOP and k.lower() != "content-length":
+                if k.lower() != "content-length":
                     self.send_header(k, v)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()

@@ -103,21 +103,36 @@ def load_collector(
     if resolve_env:
         raw = _resolve_env_in(raw, _project_config(), on_missing)
     else:
-        raw = _strip_env_placeholders(raw)
+        raw = _resolve_dcf_in(_strip_env_placeholders(raw))
     return Collector.from_dict(raw)
 
 
 def _strip_env_placeholders(obj):
-    """Replace {{ env.VAR }} and {{ dcf.VAR }} with placeholder strings for structural validation."""
+    """Replace {{ env.VAR }} with a placeholder string for structural validation."""
     import re
     if isinstance(obj, dict):
         return {k: _strip_env_placeholders(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_strip_env_placeholders(v) for v in obj]
     if isinstance(obj, str):
-        obj = re.sub(r"\{\{\s*env\.\w+\s*\}\}", "<env>", obj)
-        obj = re.sub(r"\{\{\s*dcf\.\w+\s*\}\}", "<dcf>", obj)
-        return obj
+        return re.sub(r"\{\{\s*env\.\w+\s*\}\}", "<env>", obj)
+    return obj
+
+
+def _resolve_dcf_in(obj):
+    """Resolve {{ dcf.VAR }} placeholders from project state. Strips unresolvable ones."""
+    import re
+    dcf = _dcf_vars()
+
+    def replacer(match):
+        return dcf.get(match.group(1).strip(), "<dcf>")
+
+    if isinstance(obj, dict):
+        return {k: _resolve_dcf_in(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_resolve_dcf_in(v) for v in obj]
+    if isinstance(obj, str):
+        return re.sub(r"\{\{\s*dcf\.(\w+)\s*\}\}", replacer, obj)
     return obj
 
 
