@@ -69,7 +69,7 @@ def compile_project(
         active_names.add(name)
 
         build_context = _sync_build_context(project_root, name, gcp_config)
-        content_hash = _content_hash(build_context)
+        content_hash = _content_hash(build_context, collector_name=name)
         image_uri = _image_uri(project_id, region, name)
 
         tf_json_path = tf_dir / f"collector_{name}.tf.json"

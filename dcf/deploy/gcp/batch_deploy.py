@@ -235,12 +235,28 @@ def _sync_build_context(
     return build_context
 
 
-def _content_hash(build_context: Path) -> str:
-    """SHA256 of all files in build_context, excluding Dockerfile (written by Terraform)."""
+def _content_hash(build_context: Path, collector_name: str | None = None) -> str:
+    """SHA256 of files in build_context that affect this collector's container image.
+
+    Excludes:
+    - Dockerfile (written by Terraform after hashing)
+    - .dcf/state.yml (deterministic from gcp_config; doesn't affect container behavior)
+    - Other collectors' YAML files (only this collector's YAML affects its image)
+    """
     h = hashlib.sha256()
+    collectors_dir = build_context / "collectors"
+    dcf_state_file = build_context / ".dcf" / "state.yml"
     for path in sorted(build_context.rglob("*")):
-        if path.is_file() and path.name != "Dockerfile":
-            h.update(path.read_bytes())
+        if not path.is_file():
+            continue
+        if path.name == "Dockerfile":
+            continue
+        if path == dcf_state_file:
+            continue
+        if collector_name is not None and path.is_relative_to(collectors_dir):
+            if path.name != f"{collector_name}.yml":
+                continue
+        h.update(path.read_bytes())
     return h.hexdigest()
 
 
