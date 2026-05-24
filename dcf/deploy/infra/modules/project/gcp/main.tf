@@ -85,12 +85,45 @@ resource "google_project_service" "cloudbuild" {
   disable_dependent_services = false
 }
 
+# On a brand-new project, enabling an API returns immediately but the
+# underlying permissions take 30-60 s to propagate. Without this wait,
+# Terraform races ahead and hits 403s creating buckets/repositories.
+# Triggers are keyed on the API resource IDs so this is a no-op on
+# subsequent applies once the resources are already in state.
+resource "null_resource" "api_propagation_wait" {
+  depends_on = [
+    google_project_service.iam,
+    google_project_service.secretmanager,
+    google_project_service.storage,
+    google_project_service.artifactregistry,
+    google_project_service.run,
+    google_project_service.sqladmin,
+    google_project_service.cloudbuild,
+  ]
+
+  triggers = {
+    api_ids = join(",", [
+      google_project_service.iam.id,
+      google_project_service.secretmanager.id,
+      google_project_service.storage.id,
+      google_project_service.artifactregistry.id,
+      google_project_service.run.id,
+      google_project_service.sqladmin.id,
+      google_project_service.cloudbuild.id,
+    ])
+  }
+
+  provisioner "local-exec" {
+    command = "sleep 60"
+  }
+}
+
 # ================================================================== #
 # Lake: core resources                                                 #
 # ================================================================== #
 
 resource "google_service_account" "dcf_lake" {
-  depends_on   = [google_project_service.iam]
+  depends_on   = [null_resource.api_propagation_wait]
   account_id   = "dcf-lake"
   display_name = "dcf Lake Service Account"
   project      = var.project_id
@@ -101,7 +134,7 @@ resource "google_service_account_key" "dcf_lake" {
 }
 
 resource "google_secret_manager_secret" "sa_key" {
-  depends_on = [google_project_service.secretmanager]
+  depends_on = [null_resource.api_propagation_wait]
   project    = var.project_id
   secret_id  = "dcf-lake-sa-key"
 
@@ -116,7 +149,7 @@ resource "google_secret_manager_secret_version" "sa_key" {
 }
 
 resource "google_storage_bucket" "warehouse" {
-  depends_on                  = [google_project_service.storage]
+  depends_on                  = [null_resource.api_propagation_wait]
   name                        = "dcf-warehouse-${var.project_id}"
   location                    = var.region
   project                     = var.project_id
@@ -124,7 +157,7 @@ resource "google_storage_bucket" "warehouse" {
 }
 
 resource "google_storage_bucket" "dags" {
-  depends_on                  = [google_project_service.storage]
+  depends_on                  = [null_resource.api_propagation_wait]
   name                        = "dcf-dags-${var.project_id}"
   location                    = var.region
   project                     = var.project_id
@@ -138,7 +171,7 @@ resource "google_storage_bucket_object" "dcf_dags_factory" {
 }
 
 resource "google_artifact_registry_repository" "dcf_runner" {
-  depends_on    = [google_project_service.artifactregistry]
+  depends_on    = [null_resource.api_propagation_wait]
   project       = var.project_id
   location      = var.region
   repository_id = "dcf-runner"
