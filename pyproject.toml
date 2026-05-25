@@ -1,6 +1,6 @@
 [project]
 name = "dcf-core"
-version = "1.1.4"
+version = "1.1.5"
 requires-python = ">=3.12"
 description = "D.ata C.ollection F.ramework - Define a data source, run dcf, query the data"
 readme = "README.md"
