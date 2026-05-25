@@ -110,12 +110,12 @@ def run_collector(
 
     _log_preamble(collector, len(request_sequence))
 
-    # GCS write path bypasses Spark entirely — skip JVM startup
-    if catalog == "gcp":
-        spark = None
-    else:
+    # Spark is only needed for staging+merge collectors; PyIceberg handles everything else
+    if collector.cadence.staging is not None:
         from dcf.spark_session import get_spark
         spark = get_spark("dcf")
+    else:
+        spark = None
 
     if isinstance(collector.source, SqlSource):
         _run_sql_collector(spark, collector, catalog)
@@ -156,19 +156,14 @@ def run_collector(
 
         iceberg_writer.write(spark, collector, df, catalog=catalog, dynamic_params=dynamic_params)
 
+    ns = collector.namespace or collector.name
     if catalog == "gcp":
         from .. import writer as _w
         bucket = _w.iceberg._gcs_warehouse_bucket()
-        if collector.namespace:
-            dest = f"gs://{bucket}/{collector.namespace}/{collector.name}/data"
-        else:
-            dest = f"gs://{bucket}/{collector.name}/data"
+        dest = f"gs://{bucket}/{ns}/{collector.name}/"
     else:
         from ..project import find_project_root
-        if collector.namespace:
-            dest = str(find_project_root() / "warehouse" / collector.namespace / collector.name / "data")
-        else:
-            dest = str(find_project_root() / "warehouse" / collector.name / "data")
+        dest = str(find_project_root() / "warehouse" / ns / collector.name)
 
     total = len(request_sequence)
     if failed == total:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import io
 import uuid
 from pathlib import Path
 
@@ -26,6 +25,77 @@ def _pst_now() -> str:
     return utc_now.astimezone(pytz.timezone("America/Los_Angeles")).isoformat()
 
 
+# ------------------------------------------------------------------ #
+# PyIceberg helpers (all non-staging strategies)                       #
+# ------------------------------------------------------------------ #
+
+def _ensure_iceberg_namespace(catalog, namespace: str) -> None:
+    if not catalog.namespace_exists((namespace,)):
+        catalog.create_namespace((namespace,))
+
+
+def _arrow_schema_from_df(df: pd.DataFrame):
+    import pyarrow as pa
+    from pyiceberg.io.pyarrow import _pyarrow_to_schema_without_ids
+    return _pyarrow_to_schema_without_ids(pa.Table.from_pandas(df, preserve_index=False).schema)
+
+
+def _upsert_iceberg(catalog, df: pd.DataFrame, identifier: tuple, pk: str | None) -> None:
+    import pyarrow as pa
+    from pyiceberg.exceptions import NoSuchTableError
+
+    arrow = pa.Table.from_pandas(df, preserve_index=False)
+    _ensure_iceberg_namespace(catalog, identifier[0])
+
+    try:
+        table = catalog.load_table(identifier)
+        if pk is not None:
+            existing = table.scan().to_arrow().to_pandas()
+            existing = existing[~existing[pk].isin(df[pk].values)]
+            merged = pd.concat([existing, df], ignore_index=True)
+            arrow = pa.Table.from_pandas(merged, preserve_index=False)
+            table.overwrite(arrow)
+        else:
+            table.append(arrow)
+    except NoSuchTableError:
+        table = catalog.create_table(identifier, schema=_arrow_schema_from_df(df))
+        table.append(arrow)
+
+
+def _append_iceberg(catalog, df: pd.DataFrame, identifier: tuple) -> None:
+    import pyarrow as pa
+    from pyiceberg.exceptions import NoSuchTableError
+
+    arrow = pa.Table.from_pandas(df, preserve_index=False)
+    _ensure_iceberg_namespace(catalog, identifier[0])
+
+    try:
+        table = catalog.load_table(identifier)
+    except NoSuchTableError:
+        table = catalog.create_table(identifier, schema=_arrow_schema_from_df(df))
+
+    table.append(arrow)
+
+
+def _overwrite_iceberg(catalog, df: pd.DataFrame, identifier: tuple) -> None:
+    import pyarrow as pa
+    from pyiceberg.exceptions import NoSuchTableError
+
+    arrow = pa.Table.from_pandas(df, preserve_index=False)
+    _ensure_iceberg_namespace(catalog, identifier[0])
+
+    try:
+        table = catalog.load_table(identifier)
+        table.overwrite(arrow)
+    except NoSuchTableError:
+        table = catalog.create_table(identifier, schema=_arrow_schema_from_df(df))
+        table.append(arrow)
+
+
+# ------------------------------------------------------------------ #
+# Spark helpers (staging+merge only)                                   #
+# ------------------------------------------------------------------ #
+
 def _spark_df(spark, df: pd.DataFrame):
     from pyspark.sql.types import StructType, StructField, StringType
     df = df.astype(str)
@@ -33,56 +103,16 @@ def _spark_df(spark, df: pd.DataFrame):
     return spark.createDataFrame(df, schema=schema)
 
 
-def _ensure_namespace(spark, catalog: str, namespace: str) -> None:
+def _ensure_namespace_spark(spark, catalog: str, namespace: str) -> None:
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {catalog}.{namespace}")
 
 
-def write(
-    spark,
-    collector: Collector,
-    df: pd.DataFrame,
-    catalog: str = "local",
-    dynamic_params: dict | None = None,
-    table_name_override: str | None = None,
-    primary_key_override: str | None = None,
-) -> None:
-    """
-    Write a projected DataFrame to the Iceberg warehouse according to
-    the collector's build strategy.
-    """
-    if df.empty:
-        return
-
-    df = df.copy()
-    df["dcf_updated_at"] = _pst_now()
-
-    table_name = table_name_override or collector.name
-    pk = primary_key_override if primary_key_override is not None else collector.cadence.primary_key
-    catalog_namespace = collector.namespace or table_name  # Spark catalog always needs a namespace
-    build = collector.cadence
-
-    # GCS: use google-cloud-storage + PyArrow directly for all strategies — no Spark catalog needed
-    if catalog == "gcp":
-        warehouse_bucket = _gcs_warehouse_bucket()
-        if build.strategy == "incremental":
-            _upsert_gcs(df, warehouse_bucket, collector.namespace, table_name, pk)
-        elif build.strategy == "append":
-            _append_gcs(df, warehouse_bucket, collector.namespace, table_name)
-        elif build.strategy == "full_refresh":
-            _overwrite_gcs(df, warehouse_bucket, collector.namespace, table_name)
-        return
-
-    _ensure_namespace(spark, catalog, catalog_namespace)
-
-    if build.staging:
-        _write_staged(spark, collector, df, catalog, catalog_namespace, build.staging, build.merge, dynamic_params or {})
-    elif build.strategy == "incremental":
-        warehouse_root = Path(spark.conf.get(f"spark.sql.catalog.{catalog}.warehouse"))
-        _upsert(df, warehouse_root, collector.namespace, table_name, pk)
-    elif build.strategy == "append":
-        _append(spark, df, f"{catalog}.{catalog_namespace}.{table_name}")
-    elif build.strategy == "full_refresh":
-        _overwrite(spark, df, f"{catalog}.{catalog_namespace}.{table_name}")
+def _append_spark(spark, df: pd.DataFrame, table_id: str) -> None:
+    sdf = _spark_df(spark, df)
+    if spark.catalog.tableExists(table_id):
+        sdf.writeTo(table_id).append()
+    else:
+        sdf.writeTo(table_id).using("iceberg").tableProperty("format-version", "2").create()
 
 
 def _write_staged(
@@ -97,159 +127,12 @@ def _write_staged(
 ) -> None:
     param_value = dynamic_params.get(staging.partition_param, "default")
     table_name = staging.table_pattern.format(**{staging.partition_param: param_value})
+    table_id = f"{catalog}.{namespace}.{table_name}"
 
-    warehouse_root = Path(spark.conf.get(f"spark.sql.catalog.{catalog}.warehouse"))
-    _upsert(df, warehouse_root, namespace, table_name, collector.cadence.primary_key)
+    _append_spark(spark, df, table_id)
 
     if merge_cfg:
         _rebuild_merged(spark, catalog, namespace, staging, merge_cfg, collector.cadence.primary_key)
-
-
-def _upsert(df: pd.DataFrame, warehouse_root: Path, namespace: str | None, table_name: str, primary_key: str | None) -> None:
-    """Upsert df into warehouse_root/namespace/table_name using pyarrow directly.
-
-    Manages parquet files without Iceberg so the data directory always contains
-    exactly the current data. This lets DuckDB glob reads (warehouse_reader.py)
-    see correct results without needing to parse Iceberg snapshot metadata.
-    """
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
-    df = df.copy()
-    if primary_key:
-        df = df.drop_duplicates(subset=[primary_key])
-
-    table_root = warehouse_root / namespace / table_name if namespace else warehouse_root / table_name
-    data_dir = table_root / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    existing_files = sorted(data_dir.glob("*.parquet"))
-    if existing_files:
-        existing = pd.concat(
-            [pq.read_table(f).to_pandas() for f in existing_files],
-            ignore_index=True,
-        )
-        if primary_key:
-            existing = existing[~existing[primary_key].isin(df[primary_key].values)]
-        merged = pd.concat([existing, df], ignore_index=True)
-    else:
-        merged = df
-
-    new_file = data_dir / f"{uuid.uuid4()}.parquet"
-    pq.write_table(pa.Table.from_pandas(merged, preserve_index=False), new_file)
-
-    for f in existing_files:
-        f.unlink()
-
-
-def _upsert_gcs(
-    df: pd.DataFrame,
-    bucket_name: str,
-    namespace: str | None,
-    table_name: str,
-    primary_key: str | None,
-) -> None:
-    """Upsert df into GCS bucket using google-cloud-storage + PyArrow (no Spark needed)."""
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-    from google.cloud import storage
-
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    prefix = f"{namespace}/{table_name}/data" if namespace else f"{table_name}/data"
-
-    parquet_blobs = [
-        b for b in bucket.list_blobs(prefix=f"{prefix}/")
-        if b.name.endswith(".parquet")
-    ]
-
-    df = df.copy()
-    if primary_key:
-        df = df.drop_duplicates(subset=[primary_key])
-
-    if parquet_blobs:
-        existing = pd.concat(
-            [pq.read_table(io.BytesIO(b.download_as_bytes())).to_pandas() for b in parquet_blobs],
-            ignore_index=True,
-        )
-        if primary_key:
-            existing = existing[~existing[primary_key].isin(df[primary_key].values)]
-        merged = pd.concat([existing, df], ignore_index=True)
-    else:
-        merged = df
-
-    buf = io.BytesIO()
-    pq.write_table(pa.Table.from_pandas(merged, preserve_index=False), buf)
-    buf.seek(0)
-
-    new_blob = bucket.blob(f"{prefix}/{uuid.uuid4()}.parquet")
-    new_blob.upload_from_file(buf, content_type="application/octet-stream")
-
-    for blob in parquet_blobs:
-        blob.delete()
-
-
-def _append_gcs(
-    df: pd.DataFrame,
-    bucket_name: str,
-    namespace: str | None,
-    table_name: str,
-) -> None:
-    """Append df to GCS by writing a new Parquet file alongside existing ones."""
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-    from google.cloud import storage
-
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    prefix = f"{namespace}/{table_name}/data" if namespace else f"{table_name}/data"
-
-    buf = io.BytesIO()
-    pq.write_table(pa.Table.from_pandas(df.copy(), preserve_index=False), buf)
-    buf.seek(0)
-
-    new_blob = bucket.blob(f"{prefix}/{uuid.uuid4()}.parquet")
-    new_blob.upload_from_file(buf, content_type="application/octet-stream")
-
-
-def _overwrite_gcs(
-    df: pd.DataFrame,
-    bucket_name: str,
-    namespace: str | None,
-    table_name: str,
-) -> None:
-    """Full-refresh: delete all existing Parquet blobs, write a fresh single file."""
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-    from google.cloud import storage
-
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    prefix = f"{namespace}/{table_name}/data" if namespace else f"{table_name}/data"
-
-    for blob in bucket.list_blobs(prefix=f"{prefix}/"):
-        if blob.name.endswith(".parquet"):
-            blob.delete()
-
-    buf = io.BytesIO()
-    pq.write_table(pa.Table.from_pandas(df.copy(), preserve_index=False), buf)
-    buf.seek(0)
-
-    new_blob = bucket.blob(f"{prefix}/{uuid.uuid4()}.parquet")
-    new_blob.upload_from_file(buf, content_type="application/octet-stream")
-
-
-def _append(spark, df: pd.DataFrame, table_id: str) -> None:
-    sdf = _spark_df(spark, df)
-    if spark.catalog.tableExists(table_id):
-        sdf.writeTo(table_id).append()
-    else:
-        sdf.writeTo(table_id).using("iceberg").tableProperty("format-version", "2").create()
-
-
-def _overwrite(spark, df: pd.DataFrame, table_id: str) -> None:
-    sdf = _spark_df(spark, df)
-    sdf.writeTo(table_id).using("iceberg").tableProperty("format-version", "2").createOrReplace()
 
 
 def _rebuild_merged(
@@ -263,9 +146,8 @@ def _rebuild_merged(
     from pyspark.sql import functions as F
     from pyspark.sql.window import Window
 
-    # Collect all staging tables that match the pattern by listing the namespace
     tables = spark.sql(f"SHOW TABLES IN {catalog}.{namespace}").collect()
-    prefix = staging.table_pattern.split("{")[0]  # e.g. "permits_"
+    prefix = staging.table_pattern.split("{")[0]
     staging_ids = [
         f"{catalog}.{namespace}.{t['tableName']}"
         for t in tables
@@ -286,10 +168,6 @@ def _rebuild_merged(
         dedup_cols = merge_cfg.dedup.columns
 
         def safe_unix_ts(col_name):
-            # Cast to timestamp without a strict format so that both
-            # 'M/d/yyyy' and 'yyyy-MM-dd HH:mm:ss' values are handled.
-            # ANSI mode is disabled in the session so invalid strings
-            # return null rather than throwing.
             return F.when(
                 F.upper(F.col(col_name)) != "NAN",
                 F.col(col_name).cast("timestamp").cast("long"),
@@ -314,3 +192,46 @@ def _rebuild_merged(
     merged_id = f"{catalog}.{namespace}.{merge_cfg.table}"
     combined.writeTo(merged_id).using("iceberg").tableProperty("format-version", "2").createOrReplace()
     print(f"  Rebuilt merged table → {merged_id} ({combined.count()} rows)")
+
+
+# ------------------------------------------------------------------ #
+# Public entry point                                                    #
+# ------------------------------------------------------------------ #
+
+def write(
+    spark,
+    collector: Collector,
+    df: pd.DataFrame,
+    catalog: str = "local",
+    dynamic_params: dict | None = None,
+    table_name_override: str | None = None,
+    primary_key_override: str | None = None,
+) -> None:
+    if df.empty:
+        return
+
+    df = df.copy()
+    df["dcf_updated_at"] = _pst_now()
+
+    table_name = table_name_override or collector.name
+    pk = primary_key_override if primary_key_override is not None else collector.cadence.primary_key
+    namespace = collector.namespace or table_name
+    identifier = (namespace, table_name)
+    build = collector.cadence
+
+    # Staging+merge: Spark Hadoop Iceberg catalog
+    if build.staging:
+        _ensure_namespace_spark(spark, catalog, namespace)
+        _write_staged(spark, collector, df, catalog, namespace, build.staging, build.merge, dynamic_params or {})
+        return
+
+    # All other strategies: PyIceberg
+    from ..catalog import get_catalog as _get_pyiceberg_catalog
+    pyiceberg_catalog = _get_pyiceberg_catalog(catalog)
+
+    if build.strategy == "incremental":
+        _upsert_iceberg(pyiceberg_catalog, df, identifier, pk)
+    elif build.strategy == "append":
+        _append_iceberg(pyiceberg_catalog, df, identifier)
+    elif build.strategy == "full_refresh":
+        _overwrite_iceberg(pyiceberg_catalog, df, identifier)

@@ -22,6 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "pyspark==4.0.2",
+    "pyiceberg[pyarrow,sql-sqlite]>=0.8.0",
     "pandas",
     "requests",
     "pyarrow",

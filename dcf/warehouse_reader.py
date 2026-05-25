@@ -1,18 +1,19 @@
 """
-Fast warehouse querying via DuckDB.
+Warehouse querying via DuckDB + PyIceberg.
 
-For catalog: local  — reads Parquet files from warehouse/{namespace}/{table}/data/*.parquet
-For catalog: gcp    — downloads Parquet blobs from GCS via google-cloud-storage,
-                      registers them as Arrow tables in DuckDB, then rewrites
-                      namespace.table references to the registered names.
+Tables are stored as Apache Iceberg tables, discovered via a SqlCatalog
+backed by .dcf/catalog.db (SQLite). Spark/Hadoop Iceberg tables written
+by staging+merge are also readable via StaticTable.from_metadata().
 
-list_tables()       returns BOTH GCS and local-only tables when catalog: gcp,
-                    with a `location` field ("gcs" | "local") on each row.
+list_tables()       returns all tables with schemas and row counts.
+query(sql)          executes SQL with namespace.table refs auto-resolved.
+materialize_model() runs SQL and writes the result as an Iceberg table.
 
-Returns at most 500 rows per query.
+Returns at most 500 rows per SELECT query.
 """
 from __future__ import annotations
 
+import re
 import warnings
 from pathlib import Path
 from typing import Any
@@ -24,12 +25,10 @@ warnings.filterwarnings(
 )
 
 _MAX_ROWS = 500
-
-# SQL statement types that must NOT be wrapped in SELECT … LIMIT.
 _WRITE_PREFIXES = {"copy", "create", "insert", "drop", "delete", "update", "alter"}
 
 
-def _catalog() -> str:
+def _catalog_type() -> str:
     try:
         from .state import get_catalog
         return get_catalog()
@@ -42,202 +41,187 @@ def _warehouse() -> Path:
     return find_project_root() / "warehouse"
 
 
-def _gcs_bucket() -> str:
-    from .state import load_state
-    try:
-        return load_state().get("gcp", {}).get("warehouse_bucket", "")
-    except RuntimeError:
-        return ""
-
-
-def _iter_gcs_tables(bucket_name: str) -> list[tuple[str, str]]:
-    """List all namespace/table pairs that have data in the GCS warehouse bucket."""
-    from google.cloud import storage as gcs
-    client = gcs.Client()
-    blobs = client.list_blobs(bucket_name)
-    seen: set[tuple[str, str]] = set()
-    for blob in blobs:
-        parts = blob.name.split("/")
-        if len(parts) >= 4 and parts[2] == "data" and parts[3].endswith(".parquet"):
-            seen.add((parts[0], parts[1]))
-    return sorted(seen)
-
-
-def _load_gcs_table(bucket_name: str, namespace: str, table: str):
-    """Download all Parquet blobs for a GCS table and return a single PyArrow table."""
-    import io
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-    from google.cloud import storage as gcs
-
-    client = gcs.Client()
-    bucket = client.bucket(bucket_name)
-    prefix = f"{namespace}/{table}/data/"
-    blobs = [b for b in bucket.list_blobs(prefix=prefix) if b.name.endswith(".parquet")]
-    if not blobs:
-        return None
-    tables = [pq.read_table(io.BytesIO(b.download_as_bytes())) for b in blobs]
-    return pa.concat_tables(tables) if len(tables) > 1 else tables[0]
-
-
-def _gcs_table_key(namespace: str, table: str) -> str:
-    """DuckDB-safe registered name for a GCS table."""
-    return f"_gcs_{namespace}_{table}"
+def _get_catalog(catalog_type: str | None = None):
+    from .catalog import get_catalog
+    return get_catalog(catalog_type)
 
 
 def _is_write_statement(sql: str) -> bool:
-    """Return True if sql is a write/DDL statement that must not be wrapped in SELECT … LIMIT."""
     first_word = sql.strip().split()[0].lower() if sql.strip() else ""
     return first_word in _WRITE_PREFIXES
 
 
-def _iter_local_tables() -> list[tuple[str, str, Path]]:
-    """Yield (namespace, table, data_dir) for every local warehouse table with parquet data."""
-    warehouse = _warehouse()
-    if not warehouse.exists():
-        return []
-    results = []
-    for ns_dir in sorted(warehouse.iterdir()):
-        if not ns_dir.is_dir():
-            continue
-        for table_dir in sorted(ns_dir.iterdir()):
-            if not table_dir.is_dir():
-                continue
-            data_dir = table_dir / "data"
-            if data_dir.exists() and list(data_dir.glob("*.parquet")):
-                results.append((ns_dir.name, table_dir.name, data_dir))
-    return results
+# ------------------------------------------------------------------ #
+# Table discovery                                                       #
+# ------------------------------------------------------------------ #
 
-
-def _resolve_table_refs(sql: str, conn, catalog: str) -> str:
+def _iter_iceberg_tables(catalog_type: str) -> list[tuple[str, str]]:
     """
-    Rewrite namespace.table references in sql to DuckDB-readable form.
+    Return (namespace, table) pairs for all Iceberg tables.
 
-    GCS tables (catalog=gcp) → registered as Arrow tables in conn (priority).
-    Local tables → rewritten to read_parquet(glob).  In GCP mode this acts as
-    a fallback so that local-only tables work transparently without an error (F-021).
+    Includes both PyIceberg SqlCatalog-registered tables and Spark Hadoop
+    Iceberg tables (staging+merge output) found on the local filesystem.
+    For GCS catalog, only SqlCatalog-registered tables are listed.
     """
-    import re
+    results: set[tuple[str, str]] = set()
+    cat = _get_catalog(catalog_type)
 
+    # 1. SqlCatalog-registered tables (PyIceberg-written, covers both local + gcs)
+    try:
+        for ns_tuple in cat.list_namespaces():
+            ns = ns_tuple[0] if ns_tuple else str(ns_tuple)
+            for tbl_id in cat.list_tables(ns):
+                tbl_name = tbl_id[-1]
+                results.add((ns, tbl_name))
+    except Exception:
+        pass
+
+    # 2. Spark Hadoop Iceberg tables (local only — staging+merge)
+    if catalog_type == "local":
+        warehouse = _warehouse()
+        if warehouse.exists():
+            for ns_dir in sorted(warehouse.iterdir()):
+                if not ns_dir.is_dir():
+                    continue
+                for tbl_dir in sorted(ns_dir.iterdir()):
+                    if not tbl_dir.is_dir():
+                        continue
+                    meta_dir = tbl_dir / "metadata"
+                    if meta_dir.exists() and list(meta_dir.glob("*.metadata.json")):
+                        results.add((ns_dir.name, tbl_dir.name))
+
+    return sorted(results)
+
+
+def _load_iceberg_table(catalog, identifier: tuple[str, str]):
+    """
+    Load an Iceberg table by identifier.
+
+    Tries SqlCatalog first (PyIceberg-written tables), then falls back to
+    StaticTable.from_metadata for Spark Hadoop Iceberg tables on disk.
+    Returns None if no table is found.
+    """
+    from pyiceberg.exceptions import NoSuchTableError
+
+    try:
+        return catalog.load_table(identifier)
+    except (NoSuchTableError, Exception):
+        pass
+
+    return _load_hadoop_iceberg_table(identifier)
+
+
+def _load_hadoop_iceberg_table(identifier: tuple[str, str]):
+    """Load a Spark Hadoop Iceberg table by scanning its metadata/ directory."""
+    from pyiceberg.table import StaticTable
+
+    namespace, table_name = identifier
+    meta_dir = _warehouse() / namespace / table_name / "metadata"
+    if not meta_dir.exists():
+        return None
+
+    # Prefer version-hint.text (Hadoop catalog canonical pointer)
+    version_hint = meta_dir / "version-hint.text"
+    if version_hint.exists():
+        try:
+            v = version_hint.read_text().strip()
+            candidate = meta_dir / f"v{v}.metadata.json"
+            if candidate.exists():
+                return StaticTable.from_metadata(candidate.as_uri())
+        except Exception:
+            pass
+
+    # Fall back to the alphabetically-last metadata file
+    files = sorted(meta_dir.glob("*.metadata.json"))
+    if not files:
+        return None
+    try:
+        return StaticTable.from_metadata(files[-1].as_uri())
+    except Exception:
+        return None
+
+
+# ------------------------------------------------------------------ #
+# Query helpers                                                         #
+# ------------------------------------------------------------------ #
+
+def _resolve_table_refs(sql: str, conn, catalog_type: str) -> str:
+    """
+    Rewrite namespace.table references in sql to DuckDB-registered Arrow tables.
+
+    For each word.word pattern found in sql, attempts to load it as an Iceberg
+    table. If found, registers the Arrow scan result in conn and rewrites the
+    reference. Unknown patterns are left as-is for DuckDB to resolve natively.
+    """
+    cat = _get_catalog(catalog_type)
     resolved = sql
-    gcs_pairs: set[tuple[str, str]] = set()
 
-    if catalog == "gcp":
-        bucket = _gcs_bucket()
-        if bucket:
-            for namespace, table in _iter_gcs_tables(bucket):
-                pattern = rf"\b{re.escape(namespace)}\.{re.escape(table)}\b"
-                if re.search(pattern, resolved):
-                    arrow_table = _load_gcs_table(bucket, namespace, table)
-                    if arrow_table is not None:
-                        key = _gcs_table_key(namespace, table)
-                        conn.register(key, arrow_table)
-                        resolved = re.sub(pattern, key, resolved)
-                gcs_pairs.add((namespace, table))
-
-    # Resolve local tables — for local catalog, or as GCP fallback for local-only tables
-    for namespace, table, data_dir in _iter_local_tables():
-        if (namespace, table) in gcs_pairs:
+    candidates = set(re.findall(r'\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)\b', resolved))
+    for namespace, table in candidates:
+        tbl = _load_iceberg_table(cat, (namespace, table))
+        if tbl is None:
             continue
-        pattern = rf"\b{re.escape(namespace)}\.{re.escape(table)}\b"
-        glob = str(data_dir / "*.parquet")
-        resolved = re.sub(pattern, f"read_parquet('{glob}')", resolved)
+        try:
+            arrow = tbl.scan().to_arrow()
+        except Exception:
+            continue
+        key = f"_iceberg_{namespace}_{table}"
+        conn.register(key, arrow)
+        resolved = re.sub(
+            rf"\b{re.escape(namespace)}\.{re.escape(table)}\b",
+            f"{key} AS {table}",
+            resolved,
+        )
 
     return resolved
 
 
-def list_tables() -> list[dict[str, Any]]:
-    """
-    Return all tables in the warehouse with column schemas and row counts.
+# ------------------------------------------------------------------ #
+# Public API                                                            #
+# ------------------------------------------------------------------ #
 
-    When catalog=gcp, returns BOTH GCS tables (location='gcs') and local-only
-    tables that have not been synced to GCS (location='local').
-    """
+def list_tables() -> list[dict[str, Any]]:
+    """Return all warehouse tables with column schemas and row counts."""
     import duckdb
 
-    catalog = _catalog()
+    catalog_type = _catalog_type()
+    cat = _get_catalog(catalog_type)
     results: list[dict[str, Any]] = []
 
-    if catalog == "gcp":
-        bucket = _gcs_bucket()
-        gcs_pairs: set[tuple[str, str]] = set()
+    for namespace, table_name in _iter_iceberg_tables(catalog_type):
+        identifier = (namespace, table_name)
+        tbl = _load_iceberg_table(cat, identifier)
+        if tbl is None:
+            continue
 
-        if bucket:
-            conn = duckdb.connect()
-            for namespace, table in _iter_gcs_tables(bucket):
-                arrow_table = _load_gcs_table(bucket, namespace, table)
-                if arrow_table is None:
-                    continue
-                key = _gcs_table_key(namespace, table)
-                try:
-                    conn.register(key, arrow_table)
-                    row_count = conn.execute(f"SELECT COUNT(*) FROM {key}").fetchone()[0]
-                    cols = conn.execute(f"DESCRIBE SELECT * FROM {key} LIMIT 0").fetchall()
-                    columns = [{"name": c[0], "type": c[1]} for c in cols]
-                except Exception as e:
-                    row_count = -1
-                    columns = [{"error": str(e)}]
-                results.append({
-                    "namespace": namespace,
-                    "table": table,
-                    "full_name": f"{namespace}.{table}",
-                    "row_count": row_count,
-                    "columns": columns,
-                    "location": "gcs",
-                })
-                gcs_pairs.add((namespace, table))
-            conn.close()
-
-        # Also list local-only tables not yet in GCS (F-018)
-        for namespace, table, data_dir in _iter_local_tables():
-            if (namespace, table) in gcs_pairs:
-                continue
-            glob = str(data_dir / "*.parquet")
-            try:
-                conn2 = duckdb.connect()
-                info = conn2.execute(f"SELECT COUNT(*) as n FROM read_parquet('{glob}')").fetchone()
-                row_count = info[0] if info else 0
-                cols = conn2.execute(
-                    f"DESCRIBE SELECT * FROM read_parquet('{glob}') LIMIT 0"
-                ).fetchall()
-                columns = [{"name": c[0], "type": c[1]} for c in cols]
-                conn2.close()
-            except Exception as e:
-                row_count = -1
-                columns = [{"error": str(e)}]
-            results.append({
-                "namespace": namespace,
-                "table": table,
-                "full_name": f"{namespace}.{table}",
-                "row_count": row_count,
-                "columns": columns,
-                "location": "local",
-            })
-
-        return results
-
-    # local catalog
-    for namespace, table, data_dir in _iter_local_tables():
-        glob = str(data_dir / "*.parquet")
         try:
+            arrow = tbl.scan().to_arrow()
             conn = duckdb.connect()
-            info = conn.execute(f"SELECT COUNT(*) as n FROM read_parquet('{glob}')").fetchone()
-            row_count = info[0] if info else 0
-            cols = conn.execute(
-                f"DESCRIBE SELECT * FROM read_parquet('{glob}') LIMIT 0"
-            ).fetchall()
+            conn.register("_tbl", arrow)
+            row_count = conn.execute("SELECT COUNT(*) FROM _tbl").fetchone()[0]
+            cols = conn.execute("DESCRIBE SELECT * FROM _tbl LIMIT 0").fetchall()
             columns = [{"name": c[0], "type": c[1]} for c in cols]
             conn.close()
         except Exception as e:
             row_count = -1
             columns = [{"error": str(e)}]
+
+        # Determine location based on where the table data lives
+        location = "gcs" if catalog_type == "gcp" else "local"
+        try:
+            loc_uri = tbl.location()
+            if loc_uri and loc_uri.startswith("gs://"):
+                location = "gcs"
+        except Exception:
+            pass
+
         results.append({
             "namespace": namespace,
-            "table": table,
-            "full_name": f"{namespace}.{table}",
+            "table": table_name,
+            "full_name": f"{namespace}.{table_name}",
             "row_count": row_count,
             "columns": columns,
-            "location": "local",
+            "location": location,
         })
 
     return results
@@ -248,24 +232,18 @@ def query(sql: str) -> list[dict[str, Any]]:
     Run a SQL query against the warehouse.
 
     Table references use the form  namespace.table  — e.g.
-        SELECT neighborhood, AVG(CAST(price AS DOUBLE)) as avg_price
-        FROM craigslist_apts.craigslist_apts
-        GROUP BY 1
-        ORDER BY 2 DESC
+        SELECT * FROM stackoverflow.so_questions
 
-    Write statements (COPY, CREATE, INSERT, etc.) are executed as-is without
-    being wrapped in SELECT … LIMIT.  SELECT queries are automatically capped
-    at 500 rows unless the caller includes a LIMIT clause.
-
-    Returns at most 500 rows for SELECT queries.
+    SELECT queries are automatically capped at 500 rows unless the caller
+    includes a LIMIT clause. Write statements (COPY, CREATE, INSERT, etc.)
+    are executed as-is.
     """
     import duckdb
 
-    catalog = _catalog()
+    catalog_type = _catalog_type()
     conn = duckdb.connect()
-    resolved = _resolve_table_refs(sql, conn, catalog)
+    resolved = _resolve_table_refs(sql, conn, catalog_type)
 
-    # F-019: skip auto-LIMIT for write/DDL statements
     if not _is_write_statement(resolved) and "limit" not in resolved.lower():
         resolved = f"SELECT * FROM ({resolved}) _q LIMIT {_MAX_ROWS}"
 
@@ -282,50 +260,42 @@ def query(sql: str) -> list[dict[str, Any]]:
 
 def materialize_model(sql: str, namespace: str, table: str) -> dict[str, Any]:
     """
-    Run sql and write the result as a new warehouse table at namespace/table.
-
-    Writes locally to warehouse/<namespace>/<table>/data/part-001.parquet.
-    If catalog=gcp, also uploads the Parquet to the GCS warehouse bucket so
-    the model is immediately queryable via query_warehouse() and visible in
-    list_warehouse_tables().
+    Run sql and write the result as a new Iceberg warehouse table.
 
     Returns a dict with ok, namespace, table, row_count, and location.
     """
     import duckdb
-    import pyarrow.parquet as pq
+    from pyiceberg.exceptions import NoSuchTableError
+    from pyiceberg.io.pyarrow import _pyarrow_to_schema_without_ids as pyarrow_to_schema
 
-    catalog = _catalog()
+    catalog_type = _catalog_type()
     conn = duckdb.connect()
-    resolved = _resolve_table_refs(sql, conn, catalog)
+    resolved = _resolve_table_refs(sql, conn, catalog_type)
 
     arrow_result = conn.execute(resolved).arrow()
     if hasattr(arrow_result, "read_all"):
-        arrow_result = arrow_result.read_all()  # RecordBatchReader → Table
+        arrow_result = arrow_result.read_all()
     row_count = arrow_result.num_rows
     conn.close()
 
-    out_dir = _warehouse() / namespace / table / "data"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "part-001.parquet"
-    pq.write_table(arrow_result, out_path)
+    cat = _get_catalog(catalog_type)
+    identifier = (namespace, table)
 
-    location = str(out_path)
+    if not cat.namespace_exists((namespace,)):
+        cat.create_namespace((namespace,))
 
-    if catalog == "gcp":
-        bucket_name = _gcs_bucket()
-        if bucket_name:
-            from google.cloud import storage as gcs_storage
-            client = gcs_storage.Client()
-            gcs_bucket = client.bucket(bucket_name)
-            blob_name = f"{namespace}/{table}/data/part-001.parquet"
-            blob = gcs_bucket.blob(blob_name)
-            blob.upload_from_filename(str(out_path))
-            location = f"gs://{bucket_name}/{blob_name}"
+    try:
+        tbl = cat.load_table(identifier)
+        tbl.overwrite(arrow_result)
+    except NoSuchTableError:
+        schema = pyarrow_to_schema(arrow_result.schema)
+        tbl = cat.create_table(identifier, schema=schema)
+        tbl.append(arrow_result)
 
     return {
         "ok": True,
         "namespace": namespace,
         "table": table,
         "row_count": row_count,
-        "location": location,
+        "location": tbl.location(),
     }

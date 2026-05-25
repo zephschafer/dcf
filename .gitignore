@@ -7,3 +7,4 @@ build/
 .claude/settings.json
 testing/test_config.yml
 testing/runs/*/quipu/
+.dcf/catalog.db
