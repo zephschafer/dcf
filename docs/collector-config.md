@@ -173,23 +173,6 @@ def fetch_records(dynamic_params: dict) -> list[dict]:
 
 `dynamic_params` is the resolved param dict for the current iteration step.
 
-### `pubsub`
-
-Subscribes to a Google Cloud Pub/Sub topic for streaming ingestion.
-
-```yaml
-source:
-  type: pubsub
-  subscription: projects/my-project/subscriptions/my-sub
-  schema:
-    columns:
-      - name: id
-        path: id
-        type: string
-```
-
-Pub/Sub sources require `deployment.type: streaming` and `cadence.strategy: append`. See [deployment](#deployment--scheduling).
-
 ### Environment variable resolution
 
 Any string value in the config can reference an environment variable using `{{ env.VAR_NAME }}`. dcf resolves these at load time:
@@ -369,11 +352,9 @@ deployment:
 
 | Field      | Type    | Description                                                        |
 |------------|---------|--------------------------------------------------------------------|
-| `type`     | string  | `batch` (cron-driven) or `streaming` (Pub/Sub). Default `batch`.  |
+| `type`     | string  | `batch` (cron-driven). Default `batch`.                           |
 | `schedule` | string  | Cron expression (5-field). Required for `batch`.                   |
 | `paused`   | boolean | Set `true` to disable the schedule without deleting it. Default `false`. |
-
-`streaming` requires `source.type: pubsub` and `cadence.strategy: append`.
 
 Omitting the `deployment` block makes the collector manual-only (run with `dcf run`).
 

@@ -4,7 +4,7 @@ import textwrap
 import traceback
 
 from ..config.models import (
-    Collector, HttpSource, PythonSource, PubSubSource, SqlSource,
+    Collector, HttpSource, PythonSource, SqlSource,
     DateRangeIterate, CategoricalIterate,
 )
 from .iterator import build_request_sequence
@@ -34,8 +34,6 @@ def _log_preamble(collector: Collector, n_requests: int) -> None:
         print(f"  url:     {url}")
     elif isinstance(src, PythonSource):
         print(f"  source:  {src.module}.{src.function}()")
-    elif isinstance(src, PubSubSource):
-        print(f"  source:  {src.subscription}")
     elif isinstance(src, SqlSource):
         conn = src.connection
         loc = (f"{conn.instance}/{conn.database}" if conn.type == "cloud_sql"

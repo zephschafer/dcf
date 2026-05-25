@@ -182,15 +182,7 @@ class PythonSource(BaseModel):
     schema_: Schema | None = Field(default=None, alias="schema")
 
 
-class PubSubSource(BaseModel):
-    """Continuously reads JSON messages from a GCP Pub/Sub subscription."""
-    model_config = {"populate_by_name": True}
-    type: Literal["pubsub"]
-    subscription: str   # full resource path: projects/<project>/subscriptions/<name>
-    schema_: Schema | None = Field(default=None, alias="schema")
-
-
-Source = Annotated[Union[HttpSource, PythonSource, PubSubSource, SqlSource], Field(discriminator="type")]
+Source = Annotated[Union[HttpSource, PythonSource, SqlSource], Field(discriminator="type")]
 
 
 # ------------------------------------------------------------------ #

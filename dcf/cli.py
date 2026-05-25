@@ -317,14 +317,8 @@ def validate(
             else:
                 typer.echo(f"Error loading '{collector_name}': {e}", err=True)
             raise typer.Exit(1)
-        from .config.models import PubSubSource, SqlSource
-        if isinstance(collector.source, PubSubSource):
-            typer.echo(
-                f"OK — '{collector.name}' (streaming, "
-                f"subscription: {collector.source.subscription}, "
-                f"{len(collector.source.schema_.columns)} columns)"
-            )
-        elif isinstance(collector.source, SqlSource):
+        from .config.models import SqlSource
+        if isinstance(collector.source, SqlSource):
             tables = ", ".join(t.table for t in collector.source.tables)
             typer.echo(
                 f"OK — '{collector.name}' (sql, "
