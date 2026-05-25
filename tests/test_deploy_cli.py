@@ -1,8 +1,8 @@
-"""Tests for dcf deploy / undeploy CLI error paths (F-031)."""
+"""Tests for dcf deploy / status CLI commands."""
 
-import pytest
 import yaml
 from pathlib import Path
+from unittest.mock import patch
 from typer.testing import CliRunner
 
 from dcf.cli import app
@@ -10,139 +10,162 @@ from dcf.cli import app
 runner = CliRunner()
 
 
-def _make_project(tmp_path: Path, catalog: str = "local", gcp: dict | None = None) -> Path:
-    config = {"catalog": catalog}
-    if gcp:
-        config["gcp"] = gcp
-    (tmp_path / "project.yml").write_text(yaml.dump(config))
-    (tmp_path / "collectors").mkdir()
+def _make_project(tmp_path: Path, profiles: dict | None = None, state: dict | None = None) -> Path:
+    if profiles is not None:
+        (tmp_path / "profiles.yml").write_text(yaml.dump(profiles))
+    if state is not None:
+        dcf_dir = tmp_path / ".dcf"
+        dcf_dir.mkdir(exist_ok=True)
+        (dcf_dir / "state.yml").write_text(yaml.dump(state))
+    (tmp_path / "collectors").mkdir(exist_ok=True)
     return tmp_path
 
 
-def _make_collector(project: Path, name: str, with_deploy: bool = True) -> None:
-    deploy_block = 'deployment:\n  schedule: "0 8 * * *"\n' if with_deploy else ""
-    (project / "collectors" / f"{name}.yml").write_text(
-        f"name: {name}\n"
-        f"source:\n  type: http\n  url: https://example.com\n"
-        f"  schema:\n    columns:\n      - name: id\n        path: id\n        type: integer\n"
-        f"cadence:\n  strategy: incremental\n  primary_key: id\n"
-        f"{deploy_block}"
-    )
+def _gcp_profile(project_id: str = "my-project", region: str = "us-central1") -> dict:
+    return {"default": {"type": "gcp", "project_id": project_id, "region": region}}
 
 
-def test_deploy_missing_collector(tmp_path, monkeypatch):
-    _make_project(tmp_path)
+# ------------------------------------------------------------------ #
+# dcf deploy — happy path                                              #
+# ------------------------------------------------------------------ #
+
+def test_deploy_gcp_creates_bucket_and_writes_state(tmp_path, monkeypatch):
+    _make_project(tmp_path, profiles=_gcp_profile())
     monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
-    result = runner.invoke(app, ["deploy", "nonexistent"])
+
+    with patch("dcf.deploy.gcp.deploy.ensure_warehouse_bucket", return_value="dcf-warehouse-my-project") as mock_bucket:
+        result = runner.invoke(app, ["deploy"])
+
+    assert result.exit_code == 0, result.output
+    assert "gs://dcf-warehouse-my-project" in result.output
+    mock_bucket.assert_called_once_with("my-project", "us-central1")
+
+    state = yaml.safe_load((tmp_path / ".dcf" / "state.yml").read_text())
+    assert state["catalog"] == "gcp"
+    assert state["gcp"]["warehouse_bucket"] == "dcf-warehouse-my-project"
+    assert state["gcp"]["project_id"] == "my-project"
+    assert state["gcp"]["region"] == "us-central1"
+
+
+def test_deploy_idempotent(tmp_path, monkeypatch):
+    _make_project(tmp_path, profiles=_gcp_profile())
+    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
+
+    # First deploy
+    with patch("dcf.deploy.gcp.deploy.ensure_warehouse_bucket", return_value="dcf-warehouse-my-project"):
+        result1 = runner.invoke(app, ["deploy"])
+    assert result1.exit_code == 0, result1.output
+
+    # Second deploy (bucket exists — Conflict is caught internally)
+    with patch("dcf.deploy.gcp.deploy.ensure_warehouse_bucket", return_value="dcf-warehouse-my-project"):
+        result2 = runner.invoke(app, ["deploy"])
+    assert result2.exit_code == 0, result2.output
+
+
+# ------------------------------------------------------------------ #
+# dcf deploy — error cases                                             #
+# ------------------------------------------------------------------ #
+
+def test_deploy_missing_profiles_yml(tmp_path, monkeypatch):
+    _make_project(tmp_path)  # no profiles.yml
+    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
+    result = runner.invoke(app, ["deploy"])
+    assert result.exit_code == 1
+    assert "profiles.yml" in result.output.lower()
+
+
+def test_deploy_local_profile_exits(tmp_path, monkeypatch):
+    _make_project(tmp_path, profiles={"default": {"type": "local"}})
+    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
+    result = runner.invoke(app, ["deploy"])
+    assert result.exit_code == 1
+    assert "local" in result.output.lower()
+
+
+def test_deploy_no_adc(tmp_path, monkeypatch):
+    _make_project(tmp_path, profiles=_gcp_profile())
+    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
+
+    from google.auth.exceptions import DefaultCredentialsError
+
+    with patch("dcf.deploy.gcp.deploy.ensure_warehouse_bucket", side_effect=DefaultCredentialsError("no creds")):
+        result = runner.invoke(app, ["deploy"])
+
+    assert result.exit_code == 1
+    assert "gcloud auth application-default login" in result.output
+
+
+def test_deploy_project_name_backward_compat(tmp_path, monkeypatch):
+    _make_project(tmp_path, profiles={"default": {"type": "gcp", "project_name": "old-name", "region": "us-central1"}})
+    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
+    result = runner.invoke(app, ["deploy"])
+    assert result.exit_code == 1
+    assert "project_name" in result.output
+    assert "project_id" in result.output
+
+
+def test_deploy_unknown_profile(tmp_path, monkeypatch):
+    _make_project(tmp_path, profiles=_gcp_profile())
+    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
+    result = runner.invoke(app, ["deploy", "--profile", "nonexistent"])
     assert result.exit_code == 1
     assert "not found" in result.output.lower()
 
 
-def test_deploy_no_deploy_block(tmp_path, monkeypatch):
-    project = _make_project(tmp_path)
-    _make_collector(project, "my_collector", with_deploy=False)
+# ------------------------------------------------------------------ #
+# dcf status                                                           #
+# ------------------------------------------------------------------ #
+
+def test_status_local_catalog(tmp_path, monkeypatch):
+    _make_project(tmp_path)  # no state.yml → defaults to local
     monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
-    result = runner.invoke(app, ["deploy", "my_collector"])
-    assert result.exit_code == 1
-    assert "no 'deployment:' block" in result.output
-
-
-def test_deploy_local_catalog_routes_to_local_deploy(tmp_path, monkeypatch):
-    project = _make_project(tmp_path, catalog="local")
-    _make_collector(project, "my_collector", with_deploy=True)
-    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
-
-    called = {}
-
-    def mock_deploy(collector_name, deployment, project_root, subscription=None):
-        called["collector_name"] = collector_name
-        return {
-            "type": "batch",
-            "image_tag": f"dcf-local/{collector_name}:latest",
-            "warehouse_path": str(project_root / "warehouse"),
-            "airflow_url": "http://localhost:8080",
-            "schedule": "0 8 * * *",
-            "deployed_at": "2026-05-14T00:00:00+00:00",
-        }
-
-    monkeypatch.setattr("dcf.deploy.local.deploy.deploy", mock_deploy)
-    monkeypatch.setattr("dcf.deploy.local.deploy._check_docker", lambda: None)
-    result = runner.invoke(app, ["deploy", "my_collector"])
-    assert result.exit_code == 0, result.output
-    assert called.get("collector_name") == "my_collector"
-
-
-def test_deploy_no_args_deploys_all(tmp_path, monkeypatch):
-    project = _make_project(tmp_path, catalog="local")
-    _make_collector(project, "collector_a", with_deploy=True)
-    _make_collector(project, "collector_b", with_deploy=True)
-    _make_collector(project, "no_deploy", with_deploy=False)
-    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
-
-    deployed = []
-
-    def mock_deploy(collector_name, deployment, project_root, subscription=None):
-        deployed.append(collector_name)
-        return {
-            "type": "batch",
-            "image_tag": f"dcf-local/{collector_name}:latest",
-            "warehouse_path": str(project_root / "warehouse"),
-            "airflow_url": "http://localhost:8080",
-            "schedule": "0 8 * * *",
-            "deployed_at": "2026-05-14T00:00:00+00:00",
-        }
-
-    monkeypatch.setattr("dcf.deploy.local.deploy.deploy", mock_deploy)
-    monkeypatch.setattr("dcf.deploy.local.deploy._check_docker", lambda: None)
-    result = runner.invoke(app, ["deploy"])
-    assert result.exit_code == 0, result.output
-    assert "collector_a" in deployed
-    assert "collector_b" in deployed
-    assert "no_deploy" not in deployed
-
-
-def test_deploy_requires_gcp_setup_complete(tmp_path, monkeypatch):
-    project = _make_project(tmp_path, catalog="gcp", gcp={"setup_status": "failed"})
-    _make_collector(project, "my_collector", with_deploy=True)
-    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
-    result = runner.invoke(app, ["deploy", "my_collector"])
-    assert result.exit_code == 1
-    assert "GCP setup is not complete" in result.output
-
-
-def test_undeploy_not_deployed(tmp_path, monkeypatch):
-    project = _make_project(tmp_path, catalog="gcp", gcp={"setup_status": "complete"})
-    _make_collector(project, "my_collector", with_deploy=True)
-    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
-    result = runner.invoke(app, ["undeploy", "my_collector"])
-    assert result.exit_code == 1
-    assert "not in deployments" in result.output
-
-
-def test_deploy_status_none(tmp_path, monkeypatch):
-    _make_project(tmp_path)
-    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
-    result = runner.invoke(app, ["deploy-status"])
+    result = runner.invoke(app, ["status"])
     assert result.exit_code == 0
-    assert "No collectors are currently deployed" in result.output
+    assert "local" in result.output
 
 
-def test_deploy_status_shows_deployments(tmp_path, monkeypatch):
-    project = _make_project(tmp_path)
-    config = yaml.safe_load((project / "project.yml").read_text())
-    config["deployments"] = {
-        "my_collector": {
-            "schedule": "0 8 * * *",
-            "dag_id": "my_collector",
-            "cloud_run_job": "dcf-job-my-collector",
-            "airflow_url": "https://dcf-airflow-abc123-uc.a.run.app",
-            "deployed_at": "2026-05-11T08:00:00+00:00",
-        }
-    }
-    (project / "project.yml").write_text(yaml.dump(config))
+def test_status_gcp_catalog(tmp_path, monkeypatch):
+    _make_project(tmp_path, state={
+        "catalog": "gcp",
+        "active_profile": "default",
+        "gcp": {
+            "project_id": "my-project",
+            "region": "us-central1",
+            "warehouse_bucket": "dcf-warehouse-my-project",
+            "setup_status": "complete",
+        },
+    })
     monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
-    result = runner.invoke(app, ["deploy-status"])
+    result = runner.invoke(app, ["status"])
     assert result.exit_code == 0
-    assert "my_collector" in result.output
-    assert "0 8 * * *" in result.output
-    assert "dcf-job-my-collector" in result.output
+    assert "gs://dcf-warehouse-my-project" in result.output
+    assert "my-project" in result.output
+    assert "complete" in result.output
+
+
+# ------------------------------------------------------------------ #
+# removed commands no longer exist                                     #
+# ------------------------------------------------------------------ #
+
+def test_compile_command_removed(tmp_path, monkeypatch):
+    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
+    result = runner.invoke(app, ["compile"])
+    assert result.exit_code != 0
+
+
+def test_airflow_command_removed(tmp_path, monkeypatch):
+    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
+    result = runner.invoke(app, ["airflow"])
+    assert result.exit_code != 0
+
+
+def test_undeploy_command_removed(tmp_path, monkeypatch):
+    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
+    result = runner.invoke(app, ["undeploy"])
+    assert result.exit_code != 0
+
+
+def test_gcp_subcommand_removed(tmp_path, monkeypatch):
+    monkeypatch.setenv("DCF_PROJECT_DIR", str(tmp_path))
+    result = runner.invoke(app, ["gcp", "setup"])
+    assert result.exit_code != 0

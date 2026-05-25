@@ -5,15 +5,7 @@ from pathlib import Path
 
 import yaml
 
-_KNOWN_DCF_KEYS = frozenset({
-    "catalog", "gcp", "deployments", "terraform_state_dir",
-    "airflow_admin_password", "airflow_fernet_key", "airflow_db_password",
-})
-_AIRFLOW_ENV_MAP = {
-    "airflow_admin_password": "AIRFLOW_ADMIN_PASSWORD",
-    "airflow_fernet_key": "AIRFLOW_FERNET_KEY",
-    "airflow_db_password": "AIRFLOW_DB_PASSWORD",
-}
+_KNOWN_DCF_KEYS = frozenset({"catalog", "gcp", "active_profile"})
 
 
 def _project_root() -> Path:
@@ -35,7 +27,6 @@ def _env_path() -> Path:
 
 def load_state() -> dict:
     _migrate_if_needed()
-    _migrate_gcp_state_from_profile()
     path = _state_path()
     if not path.exists():
         return {}
@@ -114,50 +105,19 @@ def _migrate_if_needed() -> None:
 
     if "catalog" in data:
         state["catalog"] = data["catalog"]
-    if "terraform_state_dir" in data:
-        state["terraform_state_dir"] = data["terraform_state_dir"]
 
-    # Split deployments: local records (no dag_id/dataflow_job_name) → state
-    #                    GCP records (dag_id or dataflow_job_name) → profile
-    deployments = data.get("deployments", {})
-    local_deps, gcp_deps = {}, {}
-    for name, dep in deployments.items():
-        if "dag_id" in dep or "dataflow_job_name" in dep:
-            gcp_deps[name] = dep
-        else:
-            local_deps[name] = dep
-    if local_deps:
-        state["deployments"] = local_deps
-
-    # GCP provisioning state → active profile in profiles.yml
+    # GCP provisioning state → state.yml gcp: section
     gcp = data.get("gcp", {})
-    if gcp or gcp_deps:
-        from .profiles import load_profile, save_profile
-        profile_name = "default"
-        try:
-            profile = load_profile(profile_name)
-        except (FileNotFoundError, KeyError):
-            profile = {}
-
-        if gcp:
-            updates = {
-                k: gcp[k] for k in (
-                    "project_id", "region", "setup_status", "setup_error",
-                    "sa_email", "secret_name", "tf_state_bucket", "warehouse_bucket",
-                ) if k in gcp
-            }
-            profile.update(updates)
-        if gcp_deps:
-            profile["deployments"] = gcp_deps
-        save_profile(profile_name, profile)
-
+    if gcp:
+        gcp_state = {
+            k: gcp[k] for k in (
+                "project_id", "region", "setup_status", "setup_error", "warehouse_bucket"
+            ) if k in gcp
+        }
+        if gcp_state:
+            state["gcp"] = gcp_state
         if gcp.get("setup_status") == "complete":
-            state["active_profile"] = profile_name
-
-    # Airflow credentials → .env
-    for yml_key, env_key in _AIRFLOW_ENV_MAP.items():
-        if data.get(yml_key):
-            save_env(env_key, data[yml_key])
+            state["active_profile"] = "default"
 
     # User env var keys (anything not in _KNOWN_DCF_KEYS) → .env
     for key, value in data.items():
@@ -170,71 +130,6 @@ def _migrate_if_needed() -> None:
     old_path.rename(root / "project.yml.bak")
     import typer
     typer.echo(
-        "[dcf] Migrated project.yml → .dcf/state.yml + profiles.yml + .env\n"
+        "[dcf] Migrated project.yml → .dcf/state.yml\n"
         "      (project.yml renamed to project.yml.bak — safe to delete)"
     )
-
-
-_GCP_STATE_KEYS = frozenset({
-    "project_id", "setup_status", "setup_error",
-    "sa_email", "secret_name", "tf_state_bucket", "warehouse_bucket",
-})
-
-
-def _migrate_gcp_state_from_profile() -> None:
-    """Move GCP runtime state from profiles.yml into state.yml gcp: section."""
-    path = _state_path()
-    state = yaml.safe_load(path.read_text()) if path.exists() else {}
-    state = state or {}
-
-    if "gcp" in state:
-        return  # already migrated
-
-    try:
-        root = _project_root()
-    except RuntimeError:
-        return
-
-    profiles_path = root / "profiles.yml"
-    if not profiles_path.exists():
-        return
-
-    profiles_data = yaml.safe_load(profiles_path.read_text()) or {}
-    active_profile = state.get("active_profile", "default")
-    profile = profiles_data.get(active_profile, {})
-
-    gcp_state_fields = {k: profile[k] for k in _GCP_STATE_KEYS if k in profile}
-    gcp_deps = profile.get("deployments", {})
-    # Only treat deployments as GCP if they look like GCP records
-    gcp_dep_records = {
-        n: d for n, d in gcp_deps.items()
-        if "dag_id" in d or "dataflow_job_name" in d
-    }
-
-    if not gcp_state_fields and not gcp_dep_records:
-        return
-
-    # Build gcp section from profile data + region
-    gcp: dict = {}
-    gcp.update(gcp_state_fields)
-    if "region" in profile:
-        gcp["region"] = profile["region"]
-    if gcp_dep_records:
-        gcp["deployments"] = gcp_dep_records
-
-    state["gcp"] = gcp
-    path.parent.mkdir(exist_ok=True)
-    path.write_text(yaml.dump(state, default_flow_style=False, sort_keys=False))
-
-    # Strip GCP state fields from the profile
-    for k in _GCP_STATE_KEYS:
-        profile.pop(k, None)
-    if gcp_dep_records:
-        # Remove migrated GCP deployments; keep any local-only ones
-        remaining = {n: d for n, d in gcp_deps.items() if n not in gcp_dep_records}
-        if remaining:
-            profile["deployments"] = remaining
-        else:
-            profile.pop("deployments", None)
-    profiles_data[active_profile] = profile
-    profiles_path.write_text(yaml.dump(profiles_data, default_flow_style=False, sort_keys=False))

@@ -1,17 +1,11 @@
 from __future__ import annotations
 
-import re
-import shutil
 from pathlib import Path
-
-_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[mGKHJF]')
 
 import typer
 
 app = typer.Typer(help="dcf", no_args_is_help=True)
-gcp_app = typer.Typer(help="GCP lake provisioning", no_args_is_help=True)
 mcp_app = typer.Typer(help="MCP server for AI-driven collector development", no_args_is_help=True)
-app.add_typer(gcp_app, name="gcp")
 app.add_typer(mcp_app, name="mcp")
 
 def _project_root() -> Path:
@@ -108,7 +102,7 @@ __pycache__/
 _PROFILES_YML_TEMPLATE = """\
 default:
   type: gcp
-  project_name: my-dcf-project
+  project_id: my-gcp-project
   region: us-central1
 """
 
@@ -392,1036 +386,95 @@ def query(
 
 
 # ------------------------------------------------------------------ #
-# gcp                                                                  #
+# deploy                                                               #
 # ------------------------------------------------------------------ #
-
-@gcp_app.command("setup")
-def gcp_setup(
-    project_id: str = typer.Option(..., "--project-id", "-p", help="GCP project ID"),
-    region: str = typer.Option(..., "--region", "-r", help="GCP region (e.g. us-central1)"),
-):
-    """Provision a GCP data lake. Tip: dcf deploy handles this automatically when profiles.yml is configured."""
-    from .deploy.gcp import bootstrap
-    from .deploy.gcp.gcloud import get_credentials
-
-    gcp = _load_gcp_state()
-
-    if gcp.get("setup_status") in ("running", "complete"):
-        typer.echo(f"GCP setup already '{gcp['setup_status']}'. Use --force to re-run.", err=True)
-        raise typer.Exit(1)
-
-    typer.echo("Checking Google credentials...")
-    try:
-        credentials = get_credentials()
-    except RuntimeError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1)
-    typer.echo("Credentials OK.")
-
-    gcp.update({"project_id": project_id, "region": region, "setup_status": "running"})
-    _save_gcp_state(gcp)
-
-    try:
-        typer.echo("Creating Terraform state bucket...")
-        tf_state_bucket = bootstrap.create_state_bucket(project_id, region, credentials)
-
-        typer.echo("Creating service account...")
-        sa_email = bootstrap.create_service_account(project_id, credentials)
-
-        typer.echo("Creating service account key...")
-        key_data = bootstrap.create_service_account_key(project_id, sa_email, credentials)
-
-        typer.echo("Storing key in Secret Manager...")
-        secret_name = bootstrap.store_key_in_secret_manager(project_id, key_data, credentials)
-
-        typer.echo("Provisioning lake infrastructure (terraform apply)...")
-        warehouse_bucket = bootstrap.create_warehouse_bucket(project_id, region, credentials)
-
-        gcp.update({
-            "sa_email": sa_email,
-            "secret_name": secret_name,
-            "tf_state_bucket": tf_state_bucket,
-            "warehouse_bucket": warehouse_bucket,
-            "setup_status": "complete",
-            "setup_error": None,
-        })
-        _save_gcp_state(gcp)
-        state = _load_state()
-        state["catalog"] = "gcp"
-        state["active_profile"] = _active_profile_name()
-        _save_state(state)
-
-        typer.echo(f"\nGCP lake provisioned successfully!")
-        typer.echo(f"  Warehouse bucket: {warehouse_bucket}")
-        typer.echo(f"  Service account:  {sa_email}")
-
-    except Exception as e:
-        gcp.update({"setup_status": "failed", "setup_error": _ANSI_RE.sub("", str(e))})
-        _save_gcp_state(gcp)
-        typer.echo(f"\nSetup failed: {e}", err=True)
-        raise typer.Exit(1)
-
-
-def _gcp_teardown_lake(gcp: dict, credentials) -> list[str]:
-    """Destroy GCP lake resources via Terraform, then delete the Terraform state bucket.
-
-    Returns list of destroyed resource names.
-    """
-    from .deploy.gcp.batch_deploy import _tf_env, _tf_run, _tf_state_dir
-    from .deploy.gcp import bootstrap
-
-    destroyed: list[str] = []
-    project_root = _project_root()
-    work_dir = _tf_state_dir(project_root) / "gcp"
-
-    if work_dir.exists():
-        typer.echo("Destroying all GCP resources via Terraform...")
-        try:
-            env = _tf_env()
-            _tf_run(["terraform", "destroy", "-auto-approve"], work_dir, env)
-            shutil.rmtree(work_dir)
-            destroyed.append("all Terraform-managed resources")
-        except Exception as e:
-            typer.echo(f"  Terraform destroy failed (continuing): {e}", err=True)
-
-    tf_state_bucket = gcp.get("tf_state_bucket", "")
-    if tf_state_bucket:
-        typer.echo(f"Deleting Terraform state bucket ({tf_state_bucket})...")
-        try:
-            bootstrap.delete_gcs_bucket(tf_state_bucket, credentials)
-            destroyed.append("Terraform state bucket")
-        except Exception as e:
-            typer.echo(f"  bucket delete failed (continuing): {e}", err=True)
-
-    return destroyed
-
-
-@gcp_app.command("teardown")
-def gcp_teardown(
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
-):
-    """Destroy GCP lake resources (warehouse bucket, service account, Secret Manager secret)."""
-    from .deploy.gcp.gcloud import get_credentials
-
-    gcp = _load_gcp_state()
-
-    if gcp.get("setup_status") not in ("complete", "failed"):
-        typer.echo("No completed GCP setup found. Nothing to tear down.")
-        return
-
-    project_id = gcp.get("project_id", "")
-    if not yes:
-        typer.confirm(
-            f"This will destroy all GCP resources for project '{project_id}'. Continue?",
-            abort=True,
-        )
-
-    try:
-        credentials = get_credentials()
-    except RuntimeError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1)
-
-    destroyed = _gcp_teardown_lake(gcp, credentials)
-
-    state = _load_state()
-    state.pop("gcp", None)
-    state["catalog"] = "local"
-    state.pop("active_profile", None)
-    _save_state(state)
-
-    if destroyed:
-        typer.echo(f"\nDestroyed: {', '.join(destroyed)}. Catalog reset to local.")
-    else:
-        typer.echo("\nNo GCP resources were found to destroy. Catalog reset to local.")
-
-
-@gcp_app.command("status")
-def gcp_status():
-    """Show GCP lake setup status."""
-    gcp = _load_gcp_state()
-
-    if not gcp.get("setup_status"):
-        typer.echo("No GCP configuration found. Run: dcf deploy")
-        return
-
-    typer.echo(f"Status:           {gcp.get('setup_status', 'unknown')}")
-    typer.echo(f"Project ID:       {gcp.get('project_id', '-')}")
-    typer.echo(f"Region:           {gcp.get('region', '-')}")
-    typer.echo(f"Warehouse bucket: {gcp.get('warehouse_bucket', '-')}")
-    typer.echo(f"Service account:  {gcp.get('sa_email', '-')}")
-    if gcp.get("setup_error"):
-        typer.echo(f"\nLast error:\n{gcp['setup_error']}", err=True)
-
-
-# ------------------------------------------------------------------ #
-# deploy / undeploy                                                    #
-# ------------------------------------------------------------------ #
-
-def _require_gcp_config() -> dict:
-    """Return GCP runtime state. Exits with a clear error if GCP is not ready."""
-    if _get_catalog() != "gcp":
-        typer.echo(
-            "Error: catalog is not 'gcp'. Deployment requires a GCP data lake.\n"
-            "  Configure profiles.yml and run: dcf deploy",
-            err=True,
-        )
-        raise typer.Exit(1)
-    gcp = _load_gcp_state()
-    if gcp.get("setup_status") != "complete":
-        typer.echo(
-            "Error: GCP setup is not complete. Run: dcf deploy",
-            err=True,
-        )
-        raise typer.Exit(1)
-    for key in ("project_id", "region", "warehouse_bucket", "sa_email"):
-        if not gcp.get(key):
-            typer.echo(f"Error: {key} is missing from state. Re-run: dcf deploy", err=True)
-            raise typer.Exit(1)
-    return gcp
-
-
-def _preflight_gcp(project_name: str) -> None:
-    """Validate all prerequisites before GCP provisioning. Exits with clear errors."""
-    import shutil
-    from .deploy.gcp import gcloud as _gcloud
-
-    # 1. gcloud installed
-    if not _gcloud.is_gcloud_installed():
-        typer.echo(
-            "Error: gcloud CLI is not installed.\n"
-            f"  Install it at: https://cloud.google.com/sdk/docs/install\n"
-            "  Then run: gcloud auth login && gcloud auth application-default login",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    # 2. User authenticated
-    account = _gcloud.get_authenticated_account()
-    if not account:
-        typer.echo("[dcf] No gcloud account active — launching gcloud auth login...")
-        import subprocess
-        subprocess.run(["gcloud", "auth", "login"], check=True)
-        account = _gcloud.get_authenticated_account()
-        if not account:
-            typer.echo("Error: gcloud authentication failed.", err=True)
-            raise typer.Exit(1)
-    typer.echo(f"[dcf] Authenticated as {account}")
-
-    # 3. ADC configured
-    if not _gcloud.is_adc_configured():
-        typer.echo("[dcf] Application Default Credentials not set — launching gcloud auth application-default login...")
-        import subprocess
-        subprocess.run(["gcloud", "auth", "application-default", "login"], check=True)
-        if not _gcloud.is_adc_configured():
-            typer.echo("Error: ADC configuration failed.", err=True)
-            raise typer.Exit(1)
-
-    # 4. Billing account exists
-    billing = _gcloud.get_active_billing_account()
-    if not billing:
-        typer.echo(
-            "Error: No active billing account found.\n"
-            "  Create one at: https://console.cloud.google.com/billing\n"
-            "  Then re-run: dcf deploy",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    # 5. project_name configured
-    if not project_name:
-        typer.echo(
-            "Error: set project_name in profiles.yml before deploying to GCP.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-
-def _ensure_gcp_provisioned(profile: dict) -> None:
-    """Provision GCP lake if not already done, writing state to .dcf/state.yml."""
-    gcp = _load_gcp_state()
-
-    if gcp.get("setup_status") == "complete":
-        for key in ("project_id", "region", "warehouse_bucket", "sa_email"):
-            if not gcp.get(key):
-                typer.echo(
-                    f"Error: {key} missing from state. Re-run dcf deploy.",
-                    err=True,
-                )
-                raise typer.Exit(1)
-        if not gcp.get("dags_bucket"):
-            try:
-                typer.echo("[dcf] Provisioning missing lake resources via Terraform...")
-                from .deploy.gcp.batch_deploy import _tf_apply_project
-                outputs = _tf_apply_project(gcp["project_id"], gcp["region"], False, {}, _project_root())
-                gcp.update({
-                    "sa_email": outputs.get("sa_email") or gcp.get("sa_email"),
-                    "secret_name": outputs.get("secret_name") or gcp.get("secret_name"),
-                    "warehouse_bucket": outputs.get("warehouse_bucket") or gcp.get("warehouse_bucket"),
-                    "dags_bucket": outputs["dags_bucket"],
-                })
-                _save_gcp_state(gcp)
-            except Exception as e:
-                typer.echo(f"[dcf] Warning: could not provision DAGs bucket: {e}", err=True)
-        return
-
-    project_name = profile.get("project_name", "")
-    region = profile.get("region", "")
-
-    typer.echo("[dcf] Checking prerequisites...")
-    _preflight_gcp(project_name)
-
-    from .deploy.gcp.gcloud import get_credentials
-    try:
-        credentials = get_credentials()
-    except RuntimeError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1)
-
-    from .deploy.gcp import bootstrap
-
-    project_id = gcp.get("project_id")
-    if project_id:
-        typer.echo(f"[dcf] Resuming provisioning for existing project: {project_id}")
-    else:
-        typer.echo("[dcf] First GCP deploy — provisioning lake (~2 min)...")
-        try:
-            typer.echo("[dcf] Creating GCP project...")
-            project_id = bootstrap.create_project(project_name, credentials)
-            typer.echo(f"[dcf] Project created: {project_id}")
-            typer.echo("[dcf] Linking billing account...")
-            bootstrap.link_billing_account(project_id, credentials)
-            typer.echo("[dcf] Billing linked.")
-        except Exception as e:
-            typer.echo(f"\n[dcf] Project creation failed: {e}", err=True)
-            raise typer.Exit(1)
-        gcp.update({"project_id": project_id, "region": region, "setup_status": "running"})
-        _save_gcp_state(gcp)
-        st = _load_state()
-        st["catalog"] = "gcp"
-        st["active_profile"] = _active_profile_name()
-        _save_state(st)
-
-    try:
-        typer.echo("[dcf] Enabling GCP APIs (may take ~60s on first run)...")
-        bootstrap.enable_required_apis(project_id, credentials)
-    except Exception as e:
-        typer.echo(f"\n[dcf] Failed to enable APIs: {e}", err=True)
-        raise typer.Exit(1)
-
-    try:
-        typer.echo("[dcf] Creating Terraform state bucket...")
-        tf_state_bucket = bootstrap.create_state_bucket(project_id, region, credentials)
-
-        typer.echo("[dcf] Provisioning lake infrastructure via Terraform...")
-        from .deploy.gcp.batch_deploy import _tf_apply_project
-        project_root = _project_root()
-        outputs = _tf_apply_project(project_id, region, False, {}, project_root)
-
-        gcp.update({
-            "region": region,
-            "sa_email": outputs["sa_email"],
-            "secret_name": outputs["secret_name"],
-            "tf_state_bucket": tf_state_bucket,
-            "warehouse_bucket": outputs["warehouse_bucket"],
-            "dags_bucket": outputs["dags_bucket"],
-            "setup_status": "complete", "setup_error": None,
-        })
-        _save_gcp_state(gcp)
-        typer.echo("[dcf] Lake provisioned.")
-    except Exception as e:
-        gcp.update({"setup_status": "failed", "setup_error": _ANSI_RE.sub("", str(e))})
-        _save_gcp_state(gcp)
-        typer.echo(f"\n[dcf] Provisioning failed: {e}", err=True)
-        raise typer.Exit(1)
-
-
-@app.command(name="compile")
-def compile_cmd(
-    collector_name: str | None = typer.Argument(None, help="Collector name (without .yml), or omit for all"),
-    profile: str = typer.Option("default", "--profile", "-p", help="Profile name from profiles.yml"),
-):
-    """Parse project config and preview what would be deployed to GCP."""
-    try:
-        from .profiles import load_profile
-        prof = load_profile(profile)
-        if prof.get("type") == "gcp":
-            _ensure_gcp_provisioned(prof)
-    except (FileNotFoundError, KeyError):
-        pass
-
-    gcp = _require_gcp_config()
-    from .deploy.gcp.compile import compile_project
-
-    filter_names = [collector_name] if collector_name else None
-    plan = compile_project(_project_root(), gcp, filter_names=filter_names)
-
-    if plan.new:
-        typer.echo(f"  + {', '.join(plan.new)}  (new)")
-    if plan.changed:
-        typer.echo(f"  ~ {', '.join(plan.changed)}  (changed)")
-    if plan.unchanged:
-        typer.echo(f"  = {', '.join(plan.unchanged)}  (unchanged)")
-    if plan.deleted:
-        typer.echo(f"  - {', '.join(plan.deleted)}  (deleted)")
-    if not any([plan.new, plan.changed, plan.deleted]):
-        typer.echo("Nothing to deploy — all collectors are up to date.")
-
 
 @app.command()
 def deploy(
-    collector_name: str | None = typer.Argument(None, help="Collector name (without .yml), or omit to deploy all"),
     profile: str = typer.Option("default", "--profile", "-p", help="Profile name from profiles.yml"),
 ):
-    """Deploy a collector locally (Docker + Airflow) or to GCP based on catalog in project.yml."""
-    if collector_name is None:
-        _deploy_all(profile_name=profile)
-        return
+    """Create or connect to the cloud warehouse lakehouse and update local state.
 
-    _deploy_one(collector_name, profile_name=profile)
+    Reads project_id and region from profiles.yml.
+    Requires Application Default Credentials: gcloud auth application-default login
+    Safe to re-run — bucket creation is idempotent.
+    """
+    from .profiles import load_profile
+    from google.auth.exceptions import DefaultCredentialsError
 
-
-def _deploy_all(profile_name: str = "default") -> None:
-    """Deploy every collector YAML that has a deployment: block."""
     try:
-        from .profiles import load_profile
-        prof = load_profile(profile_name)
-        if prof.get("type") == "gcp":
-            _ensure_gcp_provisioned(prof)
-    except (FileNotFoundError, KeyError):
-        pass
+        prof = load_profile(profile)
+    except FileNotFoundError:
+        typer.echo("Error: profiles.yml not found. Run: dcf init", err=True)
+        raise typer.Exit(1)
+    except KeyError:
+        typer.echo(f"Error: profile '{profile}' not found in profiles.yml", err=True)
+        raise typer.Exit(1)
 
+    if prof.get("type") != "gcp":
+        typer.echo(
+            f"Error: profile '{profile}' has type '{prof.get('type')}'. "
+            "Local catalog needs no deployment.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    from .deploy.gcp.deploy import deploy as gcp_deploy
+
+    typer.echo(f"[dcf] Deploying warehouse for profile '{profile}'...")
+    try:
+        gcp_state = gcp_deploy(prof)
+    except DefaultCredentialsError:
+        typer.echo(
+            "Error: No Google credentials found.\n"
+            "  Run: gcloud auth application-default login",
+            err=True,
+        )
+        raise typer.Exit(1)
+    except RuntimeError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    st = _load_state()
+    st["catalog"] = "gcp"
+    st["active_profile"] = profile
+    st["gcp"] = gcp_state
+    _save_state(st)
+
+    typer.echo("[dcf] Warehouse ready.")
+    typer.echo(f"  Bucket:     gs://{gcp_state['warehouse_bucket']}")
+    typer.echo(f"  Project ID: {gcp_state['project_id']}")
+    typer.echo(f"  Region:     {gcp_state['region']}")
+    typer.echo("\nRun collectors with: dcf run <collector_name>")
+
+
+# ------------------------------------------------------------------ #
+# status                                                               #
+# ------------------------------------------------------------------ #
+
+@app.command()
+def status():
+    """Show the current warehouse location and catalog type."""
     catalog = _get_catalog()
+    typer.echo(f"Catalog: {catalog}")
 
     if catalog == "gcp":
-        gcp = _require_gcp_config()
-        from .deploy.gcp import batch_deploy
-        typer.echo("Compiling project...")
-        try:
-            results = batch_deploy.deploy_all(_project_root(), gcp)
-        except Exception as e:
-            typer.echo(f"\nDeploy failed: {e}", err=True)
-            raise typer.Exit(1)
-
-        gcp_state = _load_gcp_state()
-        for name, state_dict in results.items():
-            airflow_url = state_dict.pop("airflow_url", "")
-            gcp_state.setdefault("deployments", {})[name] = state_dict
-            if airflow_url:
-                gcp_state["airflow_url"] = airflow_url
-        _save_gcp_state(gcp_state)
-
-        if results:
-            typer.echo(f"\nDeployed {len(results)} collector(s): {', '.join(results)}")
-        else:
-            typer.echo("All collectors are up to date — nothing to deploy.")
-        return
-
-    # Local path: deploy each collector individually
-    collectors_dir = _collectors_dir()
-    from .config import load_collector
-
-    candidates = []
-    for path in sorted(collectors_dir.rglob("*.yml")):
-        try:
-            collector = load_collector(path, resolve_env=False)
-            if collector.deployment is not None:
-                candidates.append(path.stem)
-        except Exception:
-            pass
-
-    if not candidates:
-        typer.echo("No collectors with a 'deployment:' block found in collectors/.")
-        raise typer.Exit(0)
-
-    typer.echo(f"Deploying {len(candidates)} collector(s): {', '.join(candidates)}")
-    failures = []
-    for name in candidates:
-        typer.echo(f"\n--- {name} ---")
-        try:
-            _deploy_one(name, profile_name=profile_name)
-        except SystemExit:
-            failures.append(name)
-        except Exception as e:
-            typer.echo(f"Deploy failed for '{name}': {e}", err=True)
-            failures.append(name)
-
-    if failures:
-        typer.echo(f"\nFailed: {', '.join(failures)}", err=True)
-        raise typer.Exit(1)
-
-
-def _deploy_one(collector_name: str, profile_name: str = "default") -> None:
-    from .config import load_collector
-    from .config.models import PubSubSource
-
-    path = _collectors_dir() / f"{collector_name}.yml"
-    if not path.exists():
-        typer.echo(f"Collector not found: {path}", err=True)
-        raise typer.Exit(1)
-
-    try:
-        collector = load_collector(path, resolve_env=False)
-    except Exception as e:
-        typer.echo(f"Error loading collector: {e}", err=True)
-        raise typer.Exit(1)
-
-    if collector.deployment is None:
-        typer.echo(
-            f"Error: '{collector_name}' has no 'deployment:' block in its collector YAML.\n"
-            "For a batch collector, add a deploy block with a schedule:\n\n"
-            "  deployment:\n"
-            "    schedule: \"0 8 * * *\"\n\n"
-            "For a streaming collector (source.type: pubsub), add:\n\n"
-            "  deployment:\n"
-            "    type: streaming\n"
-            "    window_seconds: 60\n",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    # If profiles.yml is present and targets GCP, auto-provision if needed
-    try:
-        from .profiles import load_profile
-        prof = load_profile(profile_name)
-        if prof.get("type") == "gcp":
-            _ensure_gcp_provisioned(prof)
-    except FileNotFoundError:
-        pass  # no profiles.yml — fall through to existing catalog check
-    except KeyError as e:
-        typer.echo(f"[dcf] {e}", err=True)
-        raise typer.Exit(1)
-
-    catalog = _get_catalog()
-    deploy_type = collector.deployment.type
-
-    try:
-        if catalog == "local":
-            from .deploy.local import deploy as local
-            subscription = None
-            if deploy_type == "streaming":
-                if not isinstance(collector.source, PubSubSource):
-                    typer.echo(
-                        "Error: deploy.type: streaming requires source.type: pubsub", err=True
-                    )
-                    raise typer.Exit(1)
-                subscription = collector.source.subscription
-                typer.echo(f"Deploying '{collector_name}' (local streaming, Kafka)...")
-            else:
-                typer.echo(f"Deploying '{collector_name}' (local batch, Terraform + Airflow)...")
-
-            state = local.deploy(
-                collector_name=collector_name,
-                deployment=collector.deployment,
-                project_root=_project_root(),
-                subscription=subscription,
-            )
-            st = _load_state()
-            st.setdefault("deployments", {})[collector_name] = state
-            _save_state(st)
-
-            typer.echo(f"\nDeployed '{collector_name}' successfully.")
-            if deploy_type == "streaming":
-                typer.echo(f"  Type:         streaming (local Docker + Kafka)")
-                typer.echo(f"  Kafka:        {state['kafka_container']}  ({state['kafka_external_bootstrap']})")
-                typer.echo(f"  Runner:       {state['runner_container']}")
-                typer.echo(f"  Warehouse:    {state['warehouse_path']}")
-                typer.echo(f"  Window:       {state['window_seconds']}s")
-                typer.echo(f"  To publish:   dcf publish {collector_name} '{{\"field\": \"value\"}}'")
-            else:
-                typer.echo(f"  Type:         batch (local Terraform)")
-                typer.echo(f"  Image:        {state['image_tag']}")
-                typer.echo(f"  Warehouse:    {state['warehouse_path']}")
-                typer.echo(f"  Airflow UI:   http://localhost:8080  (run: dcf airflow)")
-            return
-
-        gcp = _require_gcp_config()
-        if deploy_type == "streaming":
-            from .deploy.gcp import streaming_deploy
-            assert isinstance(collector.source, PubSubSource)
-            typer.echo(
-                f"Deploying '{collector_name}' (streaming, "
-                f"subscription: {collector.source.subscription})..."
-            )
-            state = streaming_deploy.deploy(
-                collector_name=collector_name,
-                subscription=collector.source.subscription,
-                window_seconds=collector.deployment.window_seconds,
-                project_root=_project_root(),
-                gcp_config=gcp,
-            )
-        else:
-            from .deploy.gcp import batch_deploy
-            typer.echo(f"Deploying '{collector_name}' (schedule: {collector.deployment.schedule})...")
-            state = batch_deploy.deploy(
-                collector_name=collector_name,
-                schedule=collector.deployment.schedule,
-                paused=collector.deployment.paused,
-                project_root=_project_root(),
-                gcp_config=gcp,
-            )
-    except (typer.Exit, SystemExit):
-        raise
-    except Exception as e:
-        typer.echo(f"\nDeploy failed: {e}", err=True)
-        raise typer.Exit(1)
-
-    gcp = _load_gcp_state()
-    airflow_url = state.pop("airflow_url", "")
-    state.pop("airflow_dags_bucket", None)  # no longer written; DAG delivery via Terraform
-    gcp.setdefault("deployments", {})[collector_name] = state
-    if airflow_url:
-        gcp["airflow_url"] = airflow_url
-    _save_gcp_state(gcp)
-
-    typer.echo(f"\nDeployed '{collector_name}' successfully.")
-    if deploy_type == "streaming":
-        typer.echo(f"  Type:         streaming (GCP Dataflow)")
-        typer.echo(f"  Dataflow job: {state['dataflow_job_name']}")
-        typer.echo(f"  Subscription: {state['subscription']}")
-        typer.echo(f"  Window:       {state['window_seconds']}s")
+        gcp = _load_gcp_state()
+        bucket = gcp.get("warehouse_bucket", "-")
+        project_id = gcp.get("project_id", "-")
+        region = gcp.get("region", "-")
+        setup_status = gcp.get("setup_status", "unknown")
+        typer.echo(f"Warehouse: gs://{bucket}")
+        typer.echo(f"Project:   {project_id}")
+        typer.echo(f"Region:    {region}")
+        typer.echo(f"Status:    {setup_status}")
     else:
-        typer.echo(f"  DAG:          {state['dag_id']}")
-        typer.echo(f"  Cloud Run:    {state['cloud_run_job']}")
-        typer.echo(f"  Schedule:     {state['schedule']}")
-        if airflow_url:
-            typer.echo(f"  Airflow UI:   http://localhost:8080  (run: dcf airflow)")
-
-
-@app.command()
-def undeploy(
-    collector_name: str | None = typer.Argument(None, help="Collector name (without .yml). Omit to undeploy everything."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
-):
-    """Stop and remove deployed collector(s) (warehouse data is untouched).
-
-    Omit COLLECTOR_NAME to destroy all deployments including the Airflow stack.
-    """
-    st = _load_state()
-    gcp = _load_gcp_state()
-    local_deps = st.get("deployments", {})
-    gcp_deps = gcp.get("deployments", {})
-    all_deps = {**local_deps, **gcp_deps}
-
-    if collector_name is None:
-        catalog = _get_catalog()
-        is_gcp = catalog == "gcp" and gcp.get("setup_status") in ("complete", "failed")
-        project_root = _project_root()
-        warehouse_path = project_root / "warehouse"
-        has_local_warehouse = catalog == "local" and warehouse_path.exists()
-
-        if not all_deps and not is_gcp and not has_local_warehouse:
-            typer.echo("Nothing to undeploy.")
-            return
-
-        if not yes:
-            if catalog == "local":
-                parts = []
-                if all_deps:
-                    parts.append(f"stop all {len(all_deps)} local deployment(s)")
-                if has_local_warehouse:
-                    parts.append("permanently delete the local warehouse directory (all collected data will be lost)")
-                typer.confirm("This will " + " and ".join(parts) + ". Proceed?", abort=True)
-            else:
-                msg = f"Destroy all {len(all_deps)} collector deployment(s)"
-                if is_gcp:
-                    msg += " and all GCP lake infrastructure (warehouse bucket, service account, secrets)"
-                typer.confirm(msg + "?", abort=True)
-
-        if catalog == "local":
-            try:
-                from .deploy.local import deploy as local
-                local.undeploy_all(local_deps, project_root)
-            except Exception as e:
-                typer.echo(f"\nUndeploy failed: {e}", err=True)
-                raise typer.Exit(1)
-
-            if has_local_warehouse:
-                typer.echo("Deleting local warehouse...")
-                shutil.rmtree(warehouse_path)
-                typer.echo("Local warehouse deleted.")
-        else:
-            for name, dep in list(gcp_deps.items()):
-                typer.echo(f"Undeploying '{name}'...")
-                try:
-                    if dep.get("type") == "streaming":
-                        from .deploy.gcp import streaming_deploy
-                        streaming_deploy.undeploy(
-                            collector_name=name, deployment=dep, gcp_config=gcp
-                        )
-                    else:
-                        from .deploy.gcp import batch_deploy
-                        batch_deploy.undeploy(
-                            collector_name=name, deployment=dep,
-                            gcp_config=gcp, project_root=project_root,
-                        )
-                except Exception as e:
-                    typer.echo(f"  failed (continuing): {e}", err=True)
-
-        st.pop("deployments", None)
-        _save_state(st)
-
-        if is_gcp:
-            from .deploy.gcp.gcloud import get_credentials
-            try:
-                credentials = get_credentials()
-                destroyed = _gcp_teardown_lake(gcp, credentials)
-                if destroyed:
-                    typer.echo(f"Lake torn down: {', '.join(destroyed)}.")
-            except Exception as e:
-                typer.echo(f"\nLake teardown failed: {e}", err=True)
-            st2 = _load_state()
-            st2.pop("gcp", None)
-            st2["catalog"] = "local"
-            st2.pop("active_profile", None)
-            _save_state(st2)
-
-        typer.echo("All collectors undeployed.")
-        return
-
-    if collector_name not in all_deps:
-        typer.echo(
-            f"Error: '{collector_name}' is not in deployments. "
-            "Nothing to undeploy.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    deployment = all_deps[collector_name]
-    deploy_type = deployment.get("type", "batch")
-    is_local = "kafka_container" in deployment or (
-        "image_tag" in deployment and "dag_id" not in deployment
-    )
-
-    if not yes:
-        if is_local:
-            if deploy_type == "streaming":
-                typer.confirm(
-                    f"Stop and remove local Docker containers for '{collector_name}'? "
-                    "(warehouse data will NOT be deleted)",
-                    abort=True,
-                )
-            else:
-                typer.confirm(
-                    f"Remove local Docker image for '{collector_name}'? "
-                    "(warehouse data will NOT be deleted)",
-                    abort=True,
-                )
-        elif deploy_type == "streaming":
-            typer.confirm(
-                f"Drain and remove Dataflow job '{deployment.get('dataflow_job_name', collector_name)}'? "
-                "(warehouse data will NOT be deleted)",
-                abort=True,
-            )
-        else:
-            typer.confirm(
-                f"Remove collector '{collector_name}' deployment and stop its scheduling? "
-                "(warehouse data will NOT be deleted)",
-                abort=True,
-            )
-
-    typer.echo(f"Undeploying '{collector_name}'...")
-    try:
-        if is_local:
-            from .deploy.local import deploy as local
-            local.undeploy(collector_name, deployment, _project_root())
-        elif deploy_type == "streaming":
-            gcp = _require_gcp_config()
-            from .deploy.gcp import streaming_deploy
-            streaming_deploy.undeploy(
-                collector_name=collector_name,
-                deployment=deployment,
-                gcp_config=gcp,
-            )
-        else:
-            gcp = _require_gcp_config()
-            from .deploy.gcp import batch_deploy
-            batch_deploy.undeploy(
-                collector_name=collector_name,
-                deployment=deployment,
-                gcp_config=gcp,
-                project_root=_project_root(),
-            )
-    except Exception as e:
-        typer.echo(f"\nUndeploy failed: {e}", err=True)
-        raise typer.Exit(1)
-
-    if is_local:
-        local_deps.pop(collector_name, None)
-        if local_deps:
-            st["deployments"] = local_deps
-        else:
-            st.pop("deployments", None)
-        _save_state(st)
-    else:
-        gcp_deps.pop(collector_name, None)
-        gcp["deployments"] = gcp_deps
-        _save_gcp_state(gcp)
-
-    typer.echo(f"'{collector_name}' undeployed. Warehouse data is untouched.")
-
-
-@app.command(name="deploy-status")
-def deploy_status(
-    collector_name: str | None = typer.Argument(None, help="Collector name, or omit for all"),
-):
-    """Show deployment state for one or all collectors."""
-    st = _load_state()
-    gcp = _load_gcp_state()
-    deployments = {**st.get("deployments", {}), **gcp.get("deployments", {})}
-    gcp_airflow_url = gcp.get("airflow_url", "")
-
-    if not deployments:
-        typer.echo("No collectors are currently deployed.")
-        return
-
-    targets = {collector_name: deployments[collector_name]} if collector_name else deployments
-
-    if collector_name and collector_name not in deployments:
-        typer.echo(f"'{collector_name}' is not deployed.", err=True)
-        raise typer.Exit(1)
-
-    for name, state in targets.items():
-        typer.echo(f"\n{name}")
-        if "kafka_container" in state:
-            typer.echo(f"  Type:         streaming (local Docker + Kafka)")
-            typer.echo(f"  Kafka:        {state.get('kafka_container', '-')}  ({state.get('kafka_external_bootstrap', '-')})")
-            typer.echo(f"  Runner:       {state.get('runner_container', '-')}")
-            typer.echo(f"  Topic:        {state.get('kafka_topic', '-')}")
-            typer.echo(f"  Window:       {state.get('window_seconds', '-')}s")
-        elif state.get("type") == "batch" and "image_tag" in state and "dag_id" not in state:
-            typer.echo(f"  Type:         batch (local Docker)")
-            typer.echo(f"  Image:        {state.get('image_tag', '-')}")
-        elif state.get("type") == "streaming":
-            typer.echo(f"  Type:         streaming (GCP Dataflow)")
-            typer.echo(f"  Dataflow job: {state.get('dataflow_job_name', '-')}")
-            typer.echo(f"  Subscription: {state.get('subscription', '-')}")
-            typer.echo(f"  Window:       {state.get('window_seconds', '-')}s")
-        else:
-            typer.echo(f"  Type:         batch (GCP)")
-            typer.echo(f"  Schedule:     {state.get('schedule', '-')}")
-            typer.echo(f"  DAG:          {state.get('dag_id', '-')}")
-            typer.echo(f"  Cloud Run:    {state.get('cloud_run_job', '-')}")
-            if gcp_airflow_url:
-                typer.echo(f"  Airflow UI:   http://localhost:8080  (run: dcf airflow)")
-        typer.echo(f"  Deployed at:  {state.get('deployed_at', '-')}")
-
-
-@app.command()
-def airflow(
-    port: int = typer.Option(8080, "--port", "-p", help="Local port to proxy on"),
-):
-    """Open a local proxy to the GCP Airflow UI (requires gcloud auth)."""
-    import subprocess
-    import threading
-    import time
-    import urllib.parse
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-    from socketserver import ThreadingMixIn
-
-    import requests as _requests
-
-    gcp = _load_gcp_state()
-    if gcp.get("setup_status") != "complete":
-        typer.echo("Error: GCP is not provisioned. Run: dcf deploy", err=True)
-        raise typer.Exit(1)
-
-    airflow_url = gcp.get("airflow_url")
-    if not airflow_url:
-        typer.echo("Error: Airflow has not been deployed yet. Run: dcf deploy <collector>", err=True)
-        raise typer.Exit(1)
-
-    target_url = airflow_url.rstrip("/")
-    target_host = urllib.parse.urlparse(target_url).netloc
-
-    # Cache the identity token and refresh it before it expires (tokens last 1 hour).
-    # Using a direct token+proxy avoids gcloud run services proxy, which routes each
-    # request through the Cloud Run Admin API endpoint and can trigger rate limiting
-    # when Airflow's UI makes bursts of calls (status polling, log fetching, etc.).
-    class _TokenCache:
-        def __init__(self):
-            self._token = None
-            self._expires_at = 0.0
-            self._lock = threading.Lock()
-
-        def get(self) -> str:
-            with self._lock:
-                if time.monotonic() < self._expires_at:
-                    return self._token
-                result = subprocess.run(
-                    ["gcloud", "auth", "print-identity-token"],
-                    capture_output=True, text=True, check=True,
-                )
-                self._token = result.stdout.strip()
-                self._expires_at = time.monotonic() + 3300  # refresh 5 min before expiry
-                return self._token
-
-    _HOP_BY_HOP = frozenset([
-        "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-        "te", "trailers", "transfer-encoding", "upgrade",
-    ])
-    token_cache = _TokenCache()
-
-    local_origin = f"http://localhost:{port}"
-    target_scheme = urllib.parse.urlparse(target_url).scheme
-
-    # Shared session reuses TLS connections (keep-alive) across all proxy requests,
-    # avoiding per-request connection setup which triggers Cloud Run rate limiting.
-    # Pool size raised to handle the many concurrent sub-requests a browser sends
-    # when loading an Airflow page (static assets, API polling, log fetching).
-    _session = _requests.Session()
-    from requests.adapters import HTTPAdapter as _HTTPAdapter
-    _adapter = _HTTPAdapter(pool_connections=1, pool_maxsize=32, max_retries=0)
-    _session.mount("https://", _adapter)
-    _session.mount("http://", _adapter)
-
-    def _rewrite_location(v):
-        for scheme in ("https://", "http://"):
-            prefix = scheme + target_host
-            if v.startswith(prefix):
-                return local_origin + v[len(prefix):]
-        return v
-
-    class _ProxyHandler(BaseHTTPRequestHandler):
-        def _proxy(self):
-            token = token_cache.get()
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length) if content_length else None
-            fwd_headers = {
-                k: v for k, v in self.headers.items()
-                if k.lower() not in _HOP_BY_HOP and k.lower() != "host"
-            }
-            # Rewrite Referer/Origin so Airflow's CSRF check sees its own host.
-            for h in list(fwd_headers.keys()):
-                if h.lower() in ("referer", "origin"):
-                    fwd_headers[h] = fwd_headers[h].replace(local_origin, target_url, 1)
-            fwd_headers["Host"] = target_host
-            fwd_headers["Authorization"] = f"Bearer {token}"
-            fwd_headers["X-Forwarded-Proto"] = target_scheme
-
-            try:
-                resp = _session.request(
-                    self.command,
-                    target_url + self.path,
-                    headers=fwd_headers,
-                    data=body,
-                    allow_redirects=False,
-                    timeout=120,
-                    stream=True,
-                )
-            except _requests.exceptions.ReadTimeout:
-                self._relay(504, [], b"Airflow is starting up - please refresh in a moment.")
-                return
-            except _requests.exceptions.RequestException as exc:
-                self._relay(502, [], str(exc).encode())
-                return
-            resp_body = resp.raw.read(decode_content=True)
-            # Rewrite Location so the browser follows redirects through the proxy
-            # rather than navigating directly to the Cloud Run URL (which needs auth).
-            resp_headers = [
-                (k, _rewrite_location(v) if k.lower() == "location" else v)
-                for k, v in resp.headers.items()
-                if k.lower() not in _HOP_BY_HOP and k.lower() != "content-encoding"
-            ]
-            self._relay(resp.status_code, resp_headers, resp_body)
-
-        def _relay(self, status, headers, body):
-            try:
-                self.send_response(status)
-                for k, v in headers:
-                    if k.lower() != "content-length":
-                        self.send_header(k, v)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            except BrokenPipeError:
-                pass
-
-        do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = _proxy
-
-        def log_message(self, *_):
-            pass
-
-    typer.echo(f"Proxying Airflow UI on http://localhost:{port}  (Ctrl+C to stop)")
-    typer.echo("Login: admin / <password set during deploy>")
-    class _ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-        daemon_threads = True
-
-    try:
-        server = _ThreadedHTTPServer(("127.0.0.1", port), _ProxyHandler)
-    except OSError as e:
-        if e.errno == 48:  # Address already in use — kill the stale proxy and retry
-            import os
-            import signal
-            import subprocess
-            import time
-
-            result = subprocess.run(
-                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
-            )
-            pids = result.stdout.strip().split()
-            if pids:
-                for pid in pids:
-                    try:
-                        os.kill(int(pid), signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-                time.sleep(0.5)
-            server = _ThreadedHTTPServer(("127.0.0.1", port), _ProxyHandler)
-        else:
-            raise
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        typer.echo("\nProxy stopped.")
-
-
-@app.command()
-def publish(
-    collector_name: str = typer.Argument(..., help="Collector name"),
-    message: str = typer.Argument(..., help="JSON message body to publish"),
-    count: int = typer.Option(1, "--count", "-n", help="Number of times to publish the message"),
-):
-    """Publish a JSON message to the local Kafka topic for a deployed streaming collector."""
-    import json
-
-    st = _load_state()
-    all_deps = {**st.get("deployments", {}), **_load_gcp_state().get("deployments", {})}
-    state = all_deps.get(collector_name)
-    if not state:
-        typer.echo(
-            f"Error: '{collector_name}' is not deployed. Run: dcf deploy {collector_name}",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    if state.get("type") != "streaming":
-        typer.echo(
-            f"Error: '{collector_name}' is a batch deployment. dcf publish only works for streaming.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    if "kafka_topic" not in state:
-        typer.echo(
-            f"Error: '{collector_name}' is deployed on GCP, not locally. "
-            "Use gcloud pubsub topics publish to inject messages.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    try:
-        json.loads(message)
-    except json.JSONDecodeError as e:
-        typer.echo(f"Error: message is not valid JSON: {e}", err=True)
-        raise typer.Exit(1)
-
-    from .deploy.local import deploy as local
-    local.publish(collector_name, state, message, count)
-
-    noun = "message" if count == 1 else "messages"
-    typer.echo(f"Published {count} {noun} to topic '{state['kafka_topic']}'.")
-    typer.echo(f"Data will appear in warehouse after the {state['window_seconds']}s window closes.")
+        try:
+            root = _project_root()
+            typer.echo(f"Warehouse: {root / 'warehouse'}")
+        except RuntimeError:
+            typer.echo("Warehouse: (project root not found)")
+        typer.echo("Run 'dcf deploy' to provision a cloud warehouse.")
 
 
 # ------------------------------------------------------------------ #

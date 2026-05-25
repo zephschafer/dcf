@@ -16,7 +16,7 @@ def _gcs_warehouse_bucket() -> str:
     bucket = load_state().get("gcp", {}).get("warehouse_bucket")
     if not bucket:
         raise RuntimeError(
-            "GCP warehouse bucket not configured. Run: dcf gcp setup --project-id ... --region ..."
+            "GCP warehouse bucket not configured. Run: dcf deploy"
         )
     return bucket
 

@@ -8,7 +8,7 @@ license = {file = "LICENSE"}
 authors = [
   {name = "Zeph Schafer", email = "zephyr.schafer@gmail.com"},
 ]
-keywords = ["data", "ingestion", "etl", "data-pipeline", "yaml", "airflow", "gcp"]
+keywords = ["data", "ingestion", "etl", "data-pipeline", "yaml", "lakehouse", "gcp"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
@@ -30,9 +30,6 @@ dependencies = [
     "typer[all]>=0.9",
     "google-auth>=2.29",
     "google-cloud-storage>=2.16",
-    "google-cloud-secret-manager>=2.20",
-    "kafka-python>=2.0",
-    "google-api-python-client>=2.126",
     "pyyaml>=6.0",
     "mcp>=1.0",
     "duckdb>=1.0",
@@ -51,7 +48,7 @@ dcf = "dcf.cli:app"
 include = ["dcf*"]
 
 [tool.setuptools.package-data]
-dcf = ["deploy/infra/**/*", "skills/**"]
+dcf = ["skills/**"]
 
 [tool.uv]
 package = true
