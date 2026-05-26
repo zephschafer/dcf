@@ -134,36 +134,46 @@ def _normalize_sql_value(v: Any) -> Any:
     return v
 
 
-def _get_sql_connection(connection):
-    import psycopg2
-    if connection.type == "postgres":
-        return psycopg2.connect(
-            host=connection.host,
-            port=connection.port,
-            database=connection.database,
-            user=connection.user,
-            password=connection.password,
-        )
-    # cloud_sql: Cloud Run mounts the socket at /cloudsql/{connection_name}
-    # For local dev, run cloud-sql-proxy to expose the same socket path
-    return psycopg2.connect(
-        host=f"/cloudsql/{connection.instance}",
-        database=connection.database,
-        user=connection.user,
-        password=connection.password,
-    )
+def _query_table(conn, table) -> list[dict]:
+    cols = ", ".join(table.columns) if table.columns else "*"
+    cur = conn.cursor()
+    try:
+        cur.execute(f"SELECT {cols} FROM {table.table}")
+        names = [d[0] for d in cur.description]
+        return [
+            {k: _normalize_sql_value(v) for k, v in zip(names, row)}
+            for row in cur.fetchall()
+        ]
+    finally:
+        cur.close()
 
 
 def fetch_sql_table(source, table) -> list[dict]:
-    conn = _get_sql_connection(source.connection)
-    try:
-        with conn.cursor() as cur:
-            cols = ", ".join(table.columns) if table.columns else "*"
-            cur.execute(f"SELECT {cols} FROM {table.table}")
-            names = [d[0] for d in cur.description]
-            return [
-                {k: _normalize_sql_value(v) for k, v in zip(names, row)}
-                for row in cur.fetchall()
-            ]
-    finally:
-        conn.close()
+    c = source.connection
+    if c.type == "cloud_sql":
+        from google.cloud.sql.connector import Connector
+        with Connector() as connector:
+            conn = connector.connect(
+                c.instance,
+                "pg8000",
+                user=c.user,
+                password=c.password,
+                db=c.database,
+            )
+            try:
+                return _query_table(conn, table)
+            finally:
+                conn.close()
+    else:
+        import psycopg2
+        conn = psycopg2.connect(
+            host=c.host,
+            port=c.port,
+            database=c.database,
+            user=c.user,
+            password=c.password,
+        )
+        try:
+            return _query_table(conn, table)
+        finally:
+            conn.close()

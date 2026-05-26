@@ -100,7 +100,7 @@ def _run_sql_collector(
     total = len(src.tables)
     label = f"'{collector.name}'"
     if failed == total:
-        print(f"\n[dcf] {label} FAILED — all {total} table(s) errored\n")
+        raise RuntimeError(f"all {total} table(s) failed — check source connection and credentials")
     elif failed:
         print(f"\n[dcf] {label} complete with errors — {failed}/{total} tables failed\n")
     else:
