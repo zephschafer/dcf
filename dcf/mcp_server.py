@@ -225,6 +225,53 @@ def deploy(profile: str = "default") -> dict[str, Any]:
     }
 
 
+@mcp.tool()
+def start_app() -> dict[str, Any]:
+    """Start the dcf web UI at http://localhost:8080."""
+    from .app.launch import launch_app
+    import time
+    import urllib.request
+
+    try:
+        root = _project_root()
+    except RuntimeError as e:
+        return {"ok": False, "error": str(e)}
+
+    try:
+        launch_app(root)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+    for _ in range(20):
+        time.sleep(0.5)
+        try:
+            urllib.request.urlopen("http://localhost:8080/health", timeout=1)
+            return {"ok": True, "url": "http://localhost:8080"}
+        except Exception:
+            pass
+
+    return {"ok": False, "error": "app did not become ready within 10s — check .dcf/app.log"}
+
+
+@mcp.tool()
+def stop_app() -> dict[str, Any]:
+    """Stop the dcf web UI."""
+    from .app.launch import stop_app as _stop
+
+    try:
+        root = _project_root()
+    except RuntimeError as e:
+        return {"ok": False, "error": str(e)}
+
+    try:
+        _stop(root)
+        return {"ok": True}
+    except FileNotFoundError:
+        return {"ok": False, "error": "App is not running (no .dcf/app.pid found)"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def serve() -> None:
     """Start the MCP server on stdio. Called by `dcf mcp serve`."""
     mcp.run(transport="stdio")
