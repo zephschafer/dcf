@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import textwrap
 import traceback
+from collections.abc import Callable
 
 from ..config.models import (
     Collector, HttpSource, PythonSource, SqlSource,
@@ -55,10 +56,16 @@ def _log_preamble(collector: Collector, n_requests: int) -> None:
     print()
 
 
-def _run_sql_collector(spark, collector: Collector, catalog: str) -> None:
+def _run_sql_collector(
+    spark,
+    collector: Collector,
+    catalog: str,
+    on_step: Callable[[str], None] | None = None,
+) -> None:
     from .fetcher import fetch_sql_table
     src = collector.source
     failed = 0
+    notified_writing = False
 
     for sql_table in src.tables:
         print(f"  [{sql_table.table}] fetching...", flush=True)
@@ -76,6 +83,11 @@ def _run_sql_collector(spark, collector: Collector, catalog: str) -> None:
 
         df = project(records, None)
         print(f"    {len(df)} rows → writing")
+
+        if on_step and not notified_writing:
+            on_step("writing")
+            notified_writing = True
+
         iceberg_writer.write(
             spark,
             collector,
@@ -100,6 +112,7 @@ def run_collector(
     catalog: str = "local",
     limit: int | None = None,
     param_overrides: dict | None = None,
+    on_step: Callable[[str], None] | None = None,
 ) -> None:
     request_sequence = build_request_sequence(collector.cadence.iterate)
 
@@ -116,7 +129,9 @@ def run_collector(
         spark = None
 
     if isinstance(collector.source, SqlSource):
-        _run_sql_collector(spark, collector, catalog)
+        if on_step:
+            on_step("connected")
+        _run_sql_collector(spark, collector, catalog, on_step=on_step)
         if spark is not None:
             spark.stop()
         return
@@ -124,7 +139,12 @@ def run_collector(
     # Static params declared in the YAML (value is set) flow through to Python sources
     static_params = {p.name: p.value for p in collector.source.params if p.value is not None}
 
+    if on_step:
+        on_step("connected")
+
     failed = 0
+    notified_iterating = False
+    notified_writing = False
 
     for i, dynamic_params in enumerate(request_sequence, 1):
         label = " ".join(f"{k}={v}" for k, v in dynamic_params.items())
@@ -136,6 +156,10 @@ def run_collector(
         # For http sources, iterate-driven params are already handled in the fetcher;
         # pass full_params only to python sources which need everything in one dict
         source_params = full_params if isinstance(collector.source, PythonSource) else dynamic_params
+
+        if on_step and not notified_iterating:
+            on_step("iterating")
+            notified_iterating = True
 
         try:
             records = fetch_records(collector.source, source_params)
@@ -151,6 +175,10 @@ def run_collector(
 
         df = project(records, collector.source.schema_)
         print(f"    {len(df)} rows → writing")
+
+        if on_step and not notified_writing:
+            on_step("writing")
+            notified_writing = True
 
         iceberg_writer.write(spark, collector, df, catalog=catalog, dynamic_params=dynamic_params)
 

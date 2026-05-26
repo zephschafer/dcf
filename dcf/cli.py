@@ -439,7 +439,35 @@ def deploy(
     typer.echo(f"  Bucket:     gs://{gcp_state['warehouse_bucket']}")
     typer.echo(f"  Project ID: {gcp_state['project_id']}")
     typer.echo(f"  Region:     {gcp_state['region']}")
+
+    typer.echo("\n[dcf] Starting app...")
+    try:
+        from .app.launch import launch_app
+        launch_app(_project_root())
+        typer.echo("[dcf] App running at http://localhost:8080")
+    except Exception as e:
+        typer.echo(f"Warning: could not start app: {e}", err=True)
+
     typer.echo("\nRun collectors with: dcf run <collector_name>")
+
+
+# ------------------------------------------------------------------ #
+# undeploy                                                             #
+# ------------------------------------------------------------------ #
+
+@app.command()
+def undeploy():
+    """Stop the local dcf app (docker compose down)."""
+    try:
+        from .app.launch import stop_app
+        stop_app(_project_root())
+        typer.echo("[dcf] App stopped.")
+    except FileNotFoundError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
 
 
 # ------------------------------------------------------------------ #
