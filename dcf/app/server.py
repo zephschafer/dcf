@@ -4,10 +4,9 @@ import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 
-import asyncpg
+import aiosqlite
 import yaml
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
@@ -16,23 +15,27 @@ from .db import init_db, insert_run, get_latest_runs
 from .runner import get_step_labels_for_type, build_steps, run_in_background
 
 PROJECT_DIR = Path(os.environ.get("DCF_PROJECT_DIR", "."))
-DB_URL = os.environ.get("DATABASE_URL", "postgresql://dcf:dcf@localhost:5432/dcf")
+DB_PATH = PROJECT_DIR / ".dcf" / "runs.db"
 STATIC_DIR = Path(__file__).parent / "static"
 
-_pool: asyncpg.Pool | None = None
+_db: aiosqlite.Connection | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _pool
-    _pool = await asyncpg.create_pool(DB_URL)
-    async with _pool.acquire() as conn:
-        await init_db(conn)
+    global _db
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _db = await aiosqlite.connect(str(DB_PATH))
+    _db.row_factory = aiosqlite.Row
+    await init_db(_db)
     yield
-    await _pool.close()
+    await _db.close()
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+from datetime import datetime, timezone
 
 
 def _format_elapsed(started_at: datetime | None, finished_at: datetime | None, status: str) -> str | None:
@@ -90,8 +93,7 @@ async def list_collectors():
         else {}
     )
 
-    async with _pool.acquire() as conn:
-        runs = await get_latest_runs(conn)
+    runs = await get_latest_runs(_db)
 
     result = []
     for name, path in yamls.items():
@@ -127,13 +129,13 @@ async def list_collectors():
 
 @app.get("/api/collectors/{collector_name}/detail")
 async def collector_detail(collector_name: str):
-    async with _pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """SELECT status, log, error_message FROM collector_runs
-               WHERE collector_name = $1
-               ORDER BY started_at DESC LIMIT 1""",
-            collector_name,
-        )
+    async with _db.execute(
+        """SELECT status, log, error_message FROM collector_runs
+           WHERE collector_name = ?
+           ORDER BY started_at DESC LIMIT 1""",
+        (collector_name,),
+    ) as cursor:
+        row = await cursor.fetchone()
 
     log = None
     if row:
@@ -151,15 +153,15 @@ async def collector_detail(collector_name: str):
 
 @app.delete("/api/run/{collector_name}")
 async def cancel_run(collector_name: str):
-    async with _pool.acquire() as conn:
-        result = await conn.execute(
-            """UPDATE collector_runs
-               SET status = 'error', error_message = 'cancelled', finished_at = now()
-               WHERE collector_name = $1 AND status = 'running'""",
-            collector_name,
-        )
-    if result == "UPDATE 0":
-        return JSONResponse(status_code=404, content={"error": "no active run"})
+    async with _db.execute(
+        """UPDATE collector_runs
+           SET status = 'error', error_message = 'cancelled', finished_at = datetime('now')
+           WHERE collector_name = ? AND status = 'running'""",
+        (collector_name,),
+    ) as cursor:
+        await _db.commit()
+        if cursor.rowcount == 0:
+            return JSONResponse(status_code=404, content={"error": "no active run"})
     return {"cancelled": True}
 
 
@@ -177,16 +179,13 @@ async def trigger_run(body: dict):
     if meta is None:
         return JSONResponse(status_code=422, content={"error": f"could not parse '{name}.yml'"})
 
-    async with _pool.acquire() as conn:
-        runs = await get_latest_runs(conn)
-
+    runs = await get_latest_runs(_db)
     if runs.get(name, {}).get("status") == "running":
         return JSONResponse(status_code=409, content={"error": "already running"})
 
-    async with _pool.acquire() as conn:
-        run_id = await insert_run(conn, name, meta["namespace"])
+    run_id = await insert_run(_db, name, meta["namespace"])
 
     asyncio.create_task(
-        run_in_background(run_id, name, str(PROJECT_DIR), DB_URL)
+        run_in_background(run_id, name, str(PROJECT_DIR), str(DB_PATH))
     )
     return {"run_id": run_id}

@@ -1,70 +1,34 @@
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 from pathlib import Path
 
-_DCF_SOURCE = Path(__file__).parent.parent.parent  # repo root (where Dockerfile lives)
 
-_COMPOSE_TEMPLATE = """\
-services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: dcf
-      POSTGRES_USER: dcf
-      POSTGRES_PASSWORD: dcf
-    volumes:
-      - dcf_postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "dcf"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+def launch_app(project_root: Path) -> None:
+    dcf_dir = project_root / ".dcf"
+    dcf_dir.mkdir(exist_ok=True)
 
-  app:
-    build: {dcf_source}
-    environment:
-      DATABASE_URL: postgresql://dcf:dcf@db:5432/dcf
-      DCF_PROJECT_DIR: /project
-      GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
-    volumes:
-      - {project_root}:/project
-      - {gcloud_config}:/root/.config/gcloud:ro
-    ports:
-      - "8080:8080"
-    depends_on:
-      db:
-        condition: service_healthy
-
-volumes:
-  dcf_postgres:
-"""
+    log_file = open(dcf_dir / "app.log", "w")
+    proc = subprocess.Popen(
+        ["uv", "run", "uvicorn", "dcf.app.server:app", "--host", "0.0.0.0", "--port", "8080"],
+        cwd=str(project_root),
+        env={**os.environ, "DCF_PROJECT_DIR": str(project_root)},
+        stdout=log_file,
+        stderr=log_file,
+    )
+    (dcf_dir / "app.pid").write_text(str(proc.pid))
 
 
 def stop_app(project_root: Path) -> None:
-    compose_path = project_root / ".dcf" / "docker-compose.yml"
-    if not compose_path.exists():
-        raise FileNotFoundError("No .dcf/docker-compose.yml found — has dcf deploy been run?")
-    subprocess.run(
-        ["docker", "compose", "-f", str(compose_path), "down"],
-        check=True,
-    )
+    pid_file = project_root / ".dcf" / "app.pid"
+    if not pid_file.exists():
+        raise FileNotFoundError("No .dcf/app.pid found — has dcf deploy been run?")
 
-
-def launch_app(project_root: Path) -> None:
-    gcloud_config = Path.home() / ".config" / "gcloud"
-    dcf_dir = project_root / ".dcf"
-    compose_path = dcf_dir / "docker-compose.yml"
-
-    compose_path.write_text(
-        _COMPOSE_TEMPLATE.format(
-            dcf_source=_DCF_SOURCE,
-            project_root=project_root,
-            gcloud_config=gcloud_config,
-        )
-    )
-
-    subprocess.run(
-        ["docker", "compose", "-f", str(compose_path), "up", "-d", "--build"],
-        check=True,
-    )
+    pid = int(pid_file.read_text().strip())
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass  # already stopped
+    pid_file.unlink()
