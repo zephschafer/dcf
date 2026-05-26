@@ -197,6 +197,28 @@ def init():
         skill_dest.write_text(skill_content)
         created.append(".claude/commands/new-collector.md")
 
+    skill_dest_debug = claude_commands / "debug-collector.md"
+    if not skill_dest_debug.exists():
+        import importlib.resources as resources
+        debug_content = resources.files("dcf").joinpath("skills/debug-collector.md").read_text()
+        skill_dest_debug.write_text(debug_content)
+        created.append(".claude/commands/debug-collector.md")
+
+    mcp_json = root / ".mcp.json"
+    if not mcp_json.exists():
+        import json
+        mcp_config = {
+            "mcpServers": {
+                "dcf": {
+                    "type": "stdio",
+                    "command": "uv",
+                    "args": ["run", "dcf", "mcp", "serve"],
+                }
+            }
+        }
+        mcp_json.write_text(json.dumps(mcp_config, indent=2) + "\n")
+        created.append(".mcp.json")
+
     if created:
         typer.echo(f"Created: {', '.join(created)}")
     typer.echo("\nNext steps:")
